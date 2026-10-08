@@ -1,0 +1,288 @@
+/* CPVTS — Campus Parking & Vehicle Tracking System Design System */
+:root {
+  /* Color Palette */
+  --bg-darkest: #050811;
+  --bg-primary: #070B14;
+  --bg-secondary: #0B1220;
+  --bg-surface: #0F172A;
+  --bg-surface-elevated: #152238;
+  --bg-glass: rgba(11, 18, 32, 0.75);
+  --bg-glass-card: rgba(15, 23, 42, 0.65);
+  --bg-glass-overlay: rgba(5, 8, 17, 0.85);
+
+  /* Accents */
+  --cyan-primary: #00F0FF;
+  --cyan-hover: #38BDF8;
+  --cyan-glow: rgba(0, 240, 255, 0.35);
+  --cyan-subtle: rgba(0, 240, 255, 0.12);
+
+  --blue-primary: #3A86FF;
+  --blue-hover: #60A5FA;
+  --blue-glow: rgba(58, 134, 255, 0.35);
+  --blue-subtle: rgba(58, 134, 255, 0.12);
+
+  --green-avail: #10B981;
+  --green-bright: #00E676;
+  --green-glow: rgba(16, 185, 129, 0.35);
+  --green-subtle: rgba(16, 185, 129, 0.14);
+
+  --red-occupied: #EF4444;
+  --red-bright: #FF334B;
+  --red-glow: rgba(239, 68, 68, 0.35);
+  --red-subtle: rgba(239, 68, 68, 0.14);
+
+  --purple-ai: #8B5CF6;
+  --purple-bright: #A855F7;
+  --purple-glow: rgba(139, 92, 246, 0.35);
+  --purple-subtle: rgba(139, 92, 246, 0.14);
+
+  --orange-report: #F59E0B;
+  --orange-bright: #FB923C;
+  --orange-glow: rgba(245, 158, 11, 0.35);
+  --orange-subtle: rgba(245, 158, 11, 0.14);
+
+  /* Text */
+  --text-main: #F8FAFC;
+  --text-muted: #94A3B8;
+  --text-dim: #64748B;
+  --text-faint: #475569;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.14);
+  --border-neon-cyan: rgba(0, 240, 255, 0.4);
+  --border-neon-green: rgba(16, 185, 129, 0.4);
+  --border-neon-purple: rgba(139, 92, 246, 0.4);
+  --border-neon-red: rgba(239, 68, 68, 0.4);
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.65);
+  --shadow-neon: 0 0 20px var(--cyan-glow);
+
+  /* Typography */
+  --font-heading: 'Outfit', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg-darkest);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.04) 0%, transparent 40%),
+    radial-gradient(circle at 85% 20%, rgba(139, 92, 246, 0.04) 0%, transparent 45%),
+    radial-gradient(circle at 50% 80%, rgba(58, 134, 255, 0.03) 0%, transparent 50%),
+    linear-gradient(180deg, #070B14 0%, #050811 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(11, 18, 32, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-primary);
+}
+
+/* Glass Card */
+.glass-panel {
+  background: var(--bg-glass-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transition: all 0.25s ease;
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.glass-panel-neon-cyan {
+  border-color: var(--border-neon-cyan);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.15);
+}
+
+.glass-panel-neon-purple {
+  border-color: var(--border-neon-purple);
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.15);
+}
+
+.glass-panel-neon-green {
+  border-color: var(--border-neon-green);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
+}
+
+/* Animations */
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes scanLaser {
+  0% {
+    top: 5%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 90%;
+    opacity: 1;
+  }
+  100% {
+    top: 5%;
+    opacity: 0.8;
+  }
+}
+
+@keyframes radarSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+.animate-radar {
+  animation: radarSpin 4s linear infinite;
+}
+
+/* Plate Tag */
+.plate-badge {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #020617;
+  color: #F8FAFC;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Slot Badge */
+.slot-badge {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--cyan-primary);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+/* Buttons */
+.btn-primary {
+  background: linear-gradient(135deg, #00F0FF 0%, #3A86FF 100%);
+  color: #050811;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 9px 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  font-family: var(--font-body);
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
+  filter: brightness(1.08);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  font-family: var(--font-body);
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Print Rules for Receipts & Passes */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #cpvts-printable-receipt, #cpvts-printable-receipt *,
+  #cpvts-printable-pass, #cpvts-printable-pass * {
+    visibility: visible;
+  }
+  #cpvts-printable-receipt,
+  #cpvts-printable-pass {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 480px;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    padding: 20px;
+    border: 1px solid #CCCCCC;
+    box-shadow: none !important;
+  }
+  #cpvts-printable-receipt *,
+  #cpvts-printable-pass * {
+    color: #000000 !important;
+    background: transparent !important;
+    border-color: #DDDDDD !important;
+  }
+}
+
