@@ -14,6 +14,12 @@ import {
   dbDeleteRegisteredVehicle,
   dbToggleRegisteredVehicleStatus,
   dbGetSlots,
+  dbGetParkingSlots,
+  dbGetNextSlotId,
+  dbAddParkingSlot,
+  dbUpdateParkingSlot,
+  dbToggleParkingSlotStatus,
+  dbDeleteParkingSlot,
   dbUpdateSlot,
   dbGetActivities,
   dbAddActivity,
@@ -196,20 +202,86 @@ export function cpvtsBackendApiPlugin() {
           }
 
           // -------------------------------------------------------------
-          // 6. /api/slots - Parking Slot Allocation
+          // 6. /api/parking-slots & /api/slots - Parking Slot Management
           // -------------------------------------------------------------
-          if (pathname === '/api/slots' && method === 'GET') {
-            sendJson(res, { success: true, data: dbGetSlots() });
+          // GET next suggested slot ID
+          if (pathname === '/api/parking-slots/next-id' && method === 'GET') {
+            const type = url.searchParams.get('type') || 'Four-Wheeler';
+            const nextId = dbGetNextSlotId(type);
+            sendJson(res, { success: true, nextId });
             return;
           }
 
-          const slotMatch = pathname.match(/^\/api\/slots\/([^\/]+)$/);
-          if (slotMatch && method === 'PUT') {
-            const slotId = decodeURIComponent(slotMatch[1]);
-            const body = await readJson(req);
-            const updated = dbUpdateSlot(slotId, body);
-            sendJson(res, { success: true, data: updated });
+          // GET all parking slots
+          if ((pathname === '/api/parking-slots' || pathname === '/api/slots') && method === 'GET') {
+            const slots = dbGetSlots();
+            sendJson(res, { success: true, total: slots.length, data: slots });
             return;
+          }
+
+          // POST create new parking slot
+          if (pathname === '/api/parking-slots' && method === 'POST') {
+            try {
+              const body = await readJson(req);
+              const newSlot = dbAddParkingSlot(body);
+              sendJson(res, {
+                success: true,
+                message: `Parking slot ${newSlot.id} successfully added to inventory.`,
+                data: newSlot
+              }, 201);
+            } catch (err) {
+              const statusCode = err.message.includes('Duplicate') ? 409 : 400;
+              sendJson(res, { success: false, error: err.message }, statusCode);
+            }
+            return;
+          }
+
+          // PATCH /api/parking-slots/:id/status (toggle disable/enable)
+          const slotStatusMatch = pathname.match(/^\/api\/parking-slots\/([^\/]+)\/status$/);
+          if (slotStatusMatch && (method === 'PATCH' || method === 'POST')) {
+            try {
+              const slotId = decodeURIComponent(slotStatusMatch[1]);
+              const updated = dbToggleParkingSlotStatus(slotId);
+              sendJson(res, {
+                success: true,
+                message: `Slot ${updated.id} status updated to ${updated.status}.`,
+                data: updated
+              });
+            } catch (err) {
+              sendJson(res, { success: false, error: err.message }, 400);
+            }
+            return;
+          }
+
+          // PATCH/PUT or DELETE /api/parking-slots/:id or /api/slots/:id
+          const pSlotMatch = pathname.match(/^\/api\/(?:parking-slots|slots)\/([^\/]+)$/);
+          if (pSlotMatch) {
+            const slotId = decodeURIComponent(pSlotMatch[1]);
+
+            if (method === 'PATCH' || method === 'PUT') {
+              try {
+                const body = await readJson(req);
+                const updated = dbUpdateParkingSlot(slotId, body);
+                sendJson(res, {
+                  success: true,
+                  message: `Slot ${updated.id} details updated.`,
+                  data: updated
+                });
+              } catch (err) {
+                sendJson(res, { success: false, error: err.message }, 400);
+              }
+              return;
+            }
+
+            if (method === 'DELETE') {
+              try {
+                const result = dbDeleteParkingSlot(slotId);
+                sendJson(res, result);
+              } catch (err) {
+                sendJson(res, { success: false, error: err.message }, 400);
+              }
+              return;
+            }
           }
 
           // -------------------------------------------------------------

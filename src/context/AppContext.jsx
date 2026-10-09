@@ -10,6 +10,11 @@ import {
   dbApiUpdateRegisteredVehicle,
   dbApiDeleteRegisteredVehicle,
   dbApiToggleRegisteredVehicleStatus,
+  dbApiGetNextSlotId,
+  dbApiCreateParkingSlot,
+  dbApiUpdateParkingSlot,
+  dbApiToggleParkingSlotStatus,
+  dbApiDeleteParkingSlot,
   dbApiUpdateSlot,
   dbApiCheckIn,
   dbApiCheckOut,
@@ -152,15 +157,23 @@ export function AppProvider({ children }) {
   });
 
   // Dynamic Metrics
+  // Dynamic Metrics (Database is the Authoritative Single Source of Truth)
   const metrics = useMemo(() => {
     const totalSlots = slots.length;
     const pending = slots.filter(s => s.status === 'Detection Pending' || s.isPending).length;
     const occupied = slots.filter(s => s.occupied && !s.isPending).length;
-    const available = totalSlots - occupied - pending;
+    const disabled = slots.filter(s => s.status === 'Disabled' || s.isDisabled).length;
+    const available = slots.filter(s => !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+
     const twoWheelersTotal = slots.filter(s => s.zone === 'two-wheeler').length;
     const twoWheelersOccupied = slots.filter(s => s.zone === 'two-wheeler' && s.occupied).length;
+    const twoWheelersAvailable = slots.filter(s => s.zone === 'two-wheeler' && !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+
     const fourWheelersTotal = slots.filter(s => s.zone === 'four-wheeler').length;
     const fourWheelersOccupied = slots.filter(s => s.zone === 'four-wheeler' && s.occupied).length;
+    const fourWheelersAvailable = slots.filter(s => s.zone === 'four-wheeler' && !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+
+    const customZonesTotal = slots.filter(s => s.zone !== 'two-wheeler' && s.zone !== 'four-wheeler').length;
 
     const totalVehiclesCount = 12 + (activities.length - INITIAL_ACTIVITY.length);
     const totalExitedCount = 4 + (activities.filter(a => a.status === 'Exited').length - 2);
@@ -171,11 +184,15 @@ export function AppProvider({ children }) {
       occupied,
       available,
       pending,
-      freePercent: Math.round((available / totalSlots) * 100),
+      disabled,
+      freePercent: totalSlots > 0 ? Math.round((available / totalSlots) * 100) : 0,
       twoWheelersTotal,
       twoWheelersOccupied,
+      twoWheelersAvailable,
       fourWheelersTotal,
       fourWheelersOccupied,
+      fourWheelersAvailable,
+      customZonesTotal,
       todayVehicles: totalVehiclesCount,
       todayEntries: 8 + (activities.length - INITIAL_ACTIVITY.length),
       todayExits: totalExitedCount,
@@ -255,17 +272,50 @@ export function AppProvider({ children }) {
       };
     }
 
-    // Find Available Slot & Assign Slot
+    // Find Available Slot & Assign Slot (Never assign occupied or disabled slots; prioritize category match)
     let targetSlot = slotId;
     if (!targetSlot) {
       const zoneType = resolvedType === 'Four-Wheeler' ? 'four-wheeler' : 'two-wheeler';
-      const availableSlot = slots.find(s => s.zone === zoneType && !s.occupied && !s.isPending);
+      
+      // 1. Try to find a slot matching vehicle zone, not occupied, not pending, not disabled, and matching gateCategory
+      let availableSlot = slots.find(s =>
+        s.zone === zoneType &&
+        !s.occupied &&
+        !s.isPending &&
+        s.status !== 'Disabled' &&
+        !s.isDisabled &&
+        s.gateCategory === resolvedCategory
+      );
+
+      // 2. Fall back to Universal gate slots or unassigned category slots in that zone
+      if (!availableSlot) {
+        availableSlot = slots.find(s =>
+          s.zone === zoneType &&
+          !s.occupied &&
+          !s.isPending &&
+          s.status !== 'Disabled' &&
+          !s.isDisabled &&
+          (!s.gateCategory || s.gateCategory === 'Universal')
+        );
+      }
+
+      // 3. Fall back to any available active slot in that zone
+      if (!availableSlot) {
+        availableSlot = slots.find(s =>
+          s.zone === zoneType &&
+          !s.occupied &&
+          !s.isPending &&
+          s.status !== 'Disabled' &&
+          !s.isDisabled
+        );
+      }
+
       if (!availableSlot) {
         playSound('alert', soundEnabled);
         return {
           success: false,
           error: 'Parking Full',
-          message: `Parking Full: All ${resolvedType} bays in ${zoneType === 'four-wheeler' ? 'Zone F' : 'Zone T'} are occupied!`,
+          message: `Parking Full: All compatible ${resolvedType} bays in ${zoneType === 'four-wheeler' ? 'Zone F' : 'Zone T'} are occupied or under maintenance!`,
           zone: zoneType
         };
       }
@@ -874,6 +924,116 @@ export function AppProvider({ children }) {
     });
   };
 
+  // =========================================================================
+  // PARKING SLOT INVENTORY MANAGEMENT (SETTINGS CRUD WITH DATABASE INTEGRITY)
+  // =========================================================================
+
+  const createParkingSlot = async (slotData) => {
+    const cleanId = (slotData.id || '').trim().toUpperCase();
+    if (!cleanId) {
+      return { success: false, error: 'Slot ID is required and cannot be empty.' };
+    }
+
+    if (slots.some(s => s.id.toUpperCase() === cleanId)) {
+      return { success: false, error: `Duplicate Slot ID: Slot '${cleanId}' already exists in inventory.` };
+    }
+
+    const res = await dbApiCreateParkingSlot(slotData);
+    if (res && res.success) {
+      const newSlot = res.data;
+      setSlots(prev => {
+        const next = [...prev.filter(s => s.id.toUpperCase() !== cleanId), newSlot].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+        setCached('slots', next);
+        return next;
+      });
+      notifyDbSaved(`Slot ${cleanId} added to database.`);
+      playSound('success', soundEnabled);
+      return { success: true, data: newSlot };
+    }
+    return { success: false, error: res?.error || 'Failed to create slot in database.' };
+  };
+
+  const editParkingSlot = async (slotId, updates) => {
+    const cleanId = (slotId || '').trim().toUpperCase();
+    const existing = slots.find(s => s.id.toUpperCase() === cleanId);
+    if (!existing) {
+      return { success: false, error: `Slot '${cleanId}' not found.` };
+    }
+
+    if (existing.occupied && (updates.status === 'Available' || updates.occupied === false)) {
+      return { success: false, error: `Cannot manually mark slot '${cleanId}' as Available while vehicle ${existing.vehicleNumber} is actively parked.` };
+    }
+
+    const res = await dbApiUpdateParkingSlot(cleanId, updates);
+    if (res && res.success) {
+      const updated = res.data;
+      setSlots(prev => {
+        const next = prev.map(s => s.id.toUpperCase() === cleanId ? { ...s, ...updated } : s);
+        setCached('slots', next);
+        return next;
+      });
+      notifyDbSaved(`Slot ${cleanId} updated.`);
+      playSound('success', soundEnabled);
+      return { success: true, data: updated };
+    }
+    return { success: false, error: res?.error || 'Failed to update slot.' };
+  };
+
+  const toggleParkingSlotStatus = async (slotId) => {
+    const cleanId = (slotId || '').trim().toUpperCase();
+    const existing = slots.find(s => s.id.toUpperCase() === cleanId);
+    if (!existing) {
+      return { success: false, error: `Slot '${cleanId}' not found.` };
+    }
+
+    if (existing.occupied) {
+      return { success: false, error: `Cannot disable slot '${cleanId}' while occupied by vehicle ${existing.vehicleNumber}.` };
+    }
+
+    const res = await dbApiToggleParkingSlotStatus(cleanId);
+    if (res && res.success) {
+      const updated = res.data;
+      setSlots(prev => {
+        const next = prev.map(s => s.id.toUpperCase() === cleanId ? { ...s, ...updated } : s);
+        setCached('slots', next);
+        return next;
+      });
+      notifyDbSaved(`Slot ${cleanId} status set to ${updated.status}.`);
+      playSound('beep', soundEnabled);
+      return { success: true, data: updated };
+    }
+    return { success: false, error: res?.error || 'Failed to toggle slot status.' };
+  };
+
+  const deleteParkingSlot = async (slotId) => {
+    const cleanId = (slotId || '').trim().toUpperCase();
+    const existing = slots.find(s => s.id.toUpperCase() === cleanId);
+    if (!existing) {
+      return { success: false, error: `Slot '${cleanId}' not found.` };
+    }
+
+    if (existing.occupied) {
+      return { success: false, error: `Cannot delete slot '${cleanId}': Active vehicle ${existing.vehicleNumber} is parked here.` };
+    }
+
+    if (existing.isPending) {
+      return { success: false, error: `Cannot delete slot '${cleanId}': Active detection pending.` };
+    }
+
+    const res = await dbApiDeleteParkingSlot(cleanId);
+    if (res && res.success) {
+      setSlots(prev => {
+        const next = prev.filter(s => s.id.toUpperCase() !== cleanId);
+        setCached('slots', next);
+        return next;
+      });
+      notifyDbSaved(`Slot ${cleanId} deleted from inventory.`);
+      playSound('success', soundEnabled);
+      return { success: true };
+    }
+    return { success: false, error: res?.error || 'Failed to delete slot from database.' };
+  };
+
   return (
     <AppContext.Provider value={{
       currentTab,
@@ -921,7 +1081,13 @@ export function AppProvider({ children }) {
       isDbConnected,
       dbStatus,
       lastSavedNotice,
-      resetDatabaseToDefaults
+      resetDatabaseToDefaults,
+      // Slot Inventory Management Additions
+      createParkingSlot,
+      editParkingSlot,
+      toggleParkingSlotStatus,
+      deleteParkingSlot,
+      getNextSlotId: dbApiGetNextSlotId
     }}>
       {children}
     </AppContext.Provider>

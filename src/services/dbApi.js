@@ -89,20 +89,77 @@ export async function dbApiToggleRegisteredVehicleStatus(id) {
   return null;
 }
 
-export async function dbApiUpdateSlot(slotId, slotData) {
+export async function dbApiGetNextSlotId(type = 'Four-Wheeler') {
   try {
-    const res = await fetch(`/api/slots/${encodeURIComponent(slotId)}`, {
-      method: 'PUT',
+    const res = await fetch(`/api/parking-slots/next-id?type=${encodeURIComponent(type)}`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.nextId;
+    }
+  } catch (err) {
+    console.error('[CPVTS DB] Error computing next slot ID:', err);
+  }
+  return type.toLowerCase().includes('two') ? 'T-11' : 'F-06';
+}
+
+export async function dbApiCreateParkingSlot(slotData) {
+  try {
+    const res = await fetch('/api/parking-slots', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(slotData)
     });
-    if (res.ok) {
-      return await res.json();
-    }
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('[CPVTS DB] Error creating parking slot:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function dbApiUpdateParkingSlot(slotId, slotData) {
+  try {
+    const res = await fetch(`/api/parking-slots/${encodeURIComponent(slotId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(slotData)
+    });
+    const data = await res.json();
+    return data;
   } catch (err) {
     console.error('[CPVTS DB] Error updating slot:', err);
+    return { success: false, error: err.message };
   }
-  return null;
+}
+
+export async function dbApiToggleParkingSlotStatus(slotId) {
+  try {
+    const res = await fetch(`/api/parking-slots/${encodeURIComponent(slotId)}/status`, {
+      method: 'PATCH'
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('[CPVTS DB] Error toggling slot status:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function dbApiDeleteParkingSlot(slotId) {
+  try {
+    const res = await fetch(`/api/parking-slots/${encodeURIComponent(slotId)}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('[CPVTS DB] Error deleting parking slot:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function dbApiUpdateSlot(slotId, slotData) {
+  return dbApiUpdateParkingSlot(slotId, slotData);
 }
 
 export async function dbApiCheckIn(payload) {

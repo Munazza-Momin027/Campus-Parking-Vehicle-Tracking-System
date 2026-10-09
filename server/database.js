@@ -77,9 +77,30 @@ function initSchema(db) {
       category TEXT,
       entryTime TEXT,
       gate TEXT,
+      gateCategory TEXT DEFAULT 'Universal',
+      floor TEXT DEFAULT 'Ground Level',
+      row TEXT,
+      location TEXT,
+      sensorType TEXT DEFAULT 'System-Managed',
+      isDisabled INTEGER DEFAULT 0,
+      createdAt TEXT,
       updatedAt TEXT
     );
   `);
+
+  // Column migration for existing database instances
+  try {
+    const cols = db.prepare("PRAGMA table_info(parking_slots)").all().map(c => c.name);
+    if (!cols.includes('gateCategory')) db.exec("ALTER TABLE parking_slots ADD COLUMN gateCategory TEXT DEFAULT 'Universal';");
+    if (!cols.includes('floor')) db.exec("ALTER TABLE parking_slots ADD COLUMN floor TEXT DEFAULT 'Ground Level';");
+    if (!cols.includes('row')) db.exec("ALTER TABLE parking_slots ADD COLUMN row TEXT;");
+    if (!cols.includes('location')) db.exec("ALTER TABLE parking_slots ADD COLUMN location TEXT;");
+    if (!cols.includes('sensorType')) db.exec("ALTER TABLE parking_slots ADD COLUMN sensorType TEXT DEFAULT 'System-Managed';");
+    if (!cols.includes('isDisabled')) db.exec("ALTER TABLE parking_slots ADD COLUMN isDisabled INTEGER DEFAULT 0;");
+    if (!cols.includes('createdAt')) db.exec("ALTER TABLE parking_slots ADD COLUMN createdAt TEXT;");
+  } catch (migErr) {
+    console.warn('[DB Migration Warning]:', migErr.message);
+  }
 
   // 3. Activity History
   db.exec(`
@@ -860,38 +881,241 @@ export function dbGetSlots() {
   return rows.map(r => ({
     ...r,
     occupied: Boolean(r.occupied),
-    isPending: Boolean(r.isPending)
+    isPending: Boolean(r.isPending),
+    isDisabled: Boolean(r.isDisabled || r.status === 'Disabled'),
+    gateCategory: r.gateCategory || 'Universal',
+    floor: r.floor || (r.zone === 'four-wheeler' ? 'Ground Level Bay' : 'East Wing Bay'),
+    row: r.row || '',
+    location: r.location || (r.zone === 'four-wheeler' ? 'Zone F Ground Bay' : 'Zone T East Bay'),
+    sensorType: r.sensorType || 'System-Managed'
   }));
 }
 
-export function dbUpdateSlot(id, updates) {
+export const dbGetParkingSlots = dbGetSlots;
+
+/**
+ * Automatically compute next standardized Slot ID
+ * e.g. T-11, T-12 for Two-Wheeler | F-06, F-07 for Four-Wheeler
+ */
+export function dbGetNextSlotId(type = 'Four-Wheeler') {
   const db = getDatabase();
-  const existing = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(id);
-  if (!existing) return null;
+  const isTwoWheeler = String(type).toLowerCase().includes('two') || String(type).toLowerCase().includes('bike');
+  const prefix = isTwoWheeler ? 'T-' : 'F-';
+  const minStart = isTwoWheeler ? 10 : 5;
+
+  const rows = db.prepare('SELECT id FROM parking_slots').all();
+  let maxNum = minStart;
+
+  for (const r of rows) {
+    const rawId = (r.id || '').toUpperCase();
+    if (rawId.startsWith(prefix)) {
+      const match = rawId.match(/^[TF]-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) maxNum = num;
+      }
+    }
+  }
+
+  const nextNum = maxNum + 1;
+  return `${prefix}${String(nextNum).padStart(2, '0')}`;
+}
+
+/**
+ * Add a new parking slot to inventory with strict backend validation
+ */
+export function dbAddParkingSlot(slotData) {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+
+  if (!slotData || !slotData.id || !String(slotData.id).trim()) {
+    throw new Error('Slot ID is required and cannot be empty.');
+  }
+
+  const cleanId = String(slotData.id).trim().toUpperCase();
+
+  // Consistent ID pattern validation: alphanumeric prefix + hyphen + digits (e.g. T-11, F-06, VIP-01)
+  const idPattern = /^[A-Z0-9]{1,6}-\d{1,}$/i;
+  if (!idPattern.test(cleanId)) {
+    throw new Error(`Invalid Slot ID format '${cleanId}'. Format must follow a consistent pattern such as T-11 or F-06.`);
+  }
+
+  // Duplicate Slot ID prevention
+  const existing = db.prepare('SELECT id FROM parking_slots WHERE upper(id) = ?').get(cleanId);
+  if (existing) {
+    throw new Error(`Duplicate Slot ID: Slot '${cleanId}' already exists in inventory.`);
+  }
+
+  const isTwoWheeler =
+    String(slotData.type).toLowerCase().includes('two') ||
+    String(slotData.type).toLowerCase().includes('bike') ||
+    cleanId.startsWith('T-');
+
+  const vehicleType = isTwoWheeler ? 'Two-Wheeler' : 'Four-Wheeler';
+  const zone = (slotData.zone || (isTwoWheeler ? 'two-wheeler' : 'four-wheeler')).trim().toLowerCase();
+  const gateCategory = slotData.gateCategory || 'Universal';
+  const floor = slotData.floor || (isTwoWheeler ? 'Zone T — East Wing' : 'Zone F — Ground Level');
+  const row = slotData.row || '';
+  const location = slotData.location || `${floor} ${cleanId}`;
+  const sensorType = slotData.sensorType || 'System-Managed';
+  const initialStatus = slotData.status === 'Disabled' ? 'Disabled' : 'Available';
+  const isDisabled = initialStatus === 'Disabled' ? 1 : 0;
+
+  db.prepare(`
+    INSERT INTO parking_slots
+    (id, zone, type, occupied, isPending, status, vehicleNumber, driver, category, entryTime, gate, gateCategory, floor, row, location, sensorType, isDisabled, createdAt, updatedAt)
+    VALUES (?, ?, ?, 0, 0, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cleanId,
+    zone,
+    vehicleType,
+    initialStatus,
+    gateCategory,
+    floor,
+    row,
+    location,
+    sensorType,
+    isDisabled,
+    now,
+    now
+  );
+
+  const created = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(cleanId);
+  return {
+    ...created,
+    occupied: Boolean(created.occupied),
+    isPending: Boolean(created.isPending),
+    isDisabled: Boolean(created.isDisabled || created.status === 'Disabled')
+  };
+}
+
+/**
+ * Edit slot details with active vehicle integrity checks
+ */
+export function dbUpdateParkingSlot(id, updates) {
+  const db = getDatabase();
+  const cleanId = String(id).trim().toUpperCase();
+  const existing = db.prepare('SELECT * FROM parking_slots WHERE upper(id) = ?').get(cleanId);
+  if (!existing) {
+    throw new Error(`Slot '${cleanId}' not found.`);
+  }
+
+  // Integrity Check: Cannot manually mark occupied slot as available while vehicle is still parked
+  if (existing.occupied === 1 || existing.vehicleNumber) {
+    if (updates.status === 'Available' || updates.occupied === false || updates.occupied === 0) {
+      throw new Error(`Integrity Violation: Cannot manually mark slot '${cleanId}' as Available while vehicle ${existing.vehicleNumber} is actively parked.`);
+    }
+    if (updates.type && updates.type !== existing.type) {
+      throw new Error(`Cannot change vehicle type of slot '${cleanId}' while occupied by vehicle ${existing.vehicleNumber}.`);
+    }
+    if (updates.status === 'Disabled' || updates.isDisabled === true || updates.isDisabled === 1) {
+      throw new Error(`Cannot disable slot '${cleanId}' while occupied by vehicle ${existing.vehicleNumber}.`);
+    }
+  }
 
   const now = new Date().toISOString();
-  const occupied = updates.occupied !== undefined ? (updates.occupied ? 1 : 0) : existing.occupied;
-  const isPending = updates.isPending !== undefined ? (updates.isPending ? 1 : 0) : existing.isPending;
-  const status = updates.status ?? existing.status;
-  const vehicleNumber = updates.vehicleNumber !== undefined ? updates.vehicleNumber : existing.vehicleNumber;
-  const driver = updates.driver !== undefined ? updates.driver : existing.driver;
-  const category = updates.category !== undefined ? updates.category : existing.category;
-  const entryTime = updates.entryTime !== undefined ? updates.entryTime : existing.entryTime;
-  const gate = updates.gate !== undefined ? updates.gate : existing.gate;
+  const type = updates.type ?? existing.type;
+  const zone = updates.zone ?? existing.zone;
+  const gateCategory = updates.gateCategory ?? existing.gateCategory ?? 'Universal';
+  const floor = updates.floor ?? existing.floor ?? 'Ground Level';
+  const row = updates.row ?? existing.row ?? '';
+  const location = updates.location ?? existing.location ?? '';
+  const sensorType = updates.sensorType ?? existing.sensorType ?? 'System-Managed';
+  
+  let status = updates.status ?? existing.status;
+  let isDisabled = updates.isDisabled !== undefined ? (updates.isDisabled ? 1 : 0) : existing.isDisabled;
+
+  if (updates.status === 'Disabled') {
+    isDisabled = 1;
+  } else if (updates.status === 'Available' && !existing.occupied) {
+    isDisabled = 0;
+  }
 
   db.prepare(`
     UPDATE parking_slots SET
-      occupied = ?, isPending = ?, status = ?, vehicleNumber = ?,
-      driver = ?, category = ?, entryTime = ?, gate = ?, updatedAt = ?
+      type = ?, zone = ?, gateCategory = ?, floor = ?, row = ?,
+      location = ?, sensorType = ?, status = ?, isDisabled = ?, updatedAt = ?
     WHERE id = ?
-  `).run(occupied, isPending, status, vehicleNumber, driver, category, entryTime, gate, now, id);
+  `).run(
+    type, zone, gateCategory, floor, row,
+    location, sensorType, status, isDisabled, now, existing.id
+  );
 
-  const row = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(id);
+  const updated = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(existing.id);
   return {
-    ...row,
-    occupied: Boolean(row.occupied),
-    isPending: Boolean(row.isPending)
+    ...updated,
+    occupied: Boolean(updated.occupied),
+    isPending: Boolean(updated.isPending),
+    isDisabled: Boolean(updated.isDisabled || updated.status === 'Disabled')
   };
+}
+
+export const dbUpdateSlot = dbUpdateParkingSlot;
+
+/**
+ * Toggle enable/disable status with active vehicle guard
+ */
+export function dbToggleParkingSlotStatus(id) {
+  const db = getDatabase();
+  const cleanId = String(id).trim().toUpperCase();
+  const existing = db.prepare('SELECT * FROM parking_slots WHERE upper(id) = ?').get(cleanId);
+  if (!existing) {
+    throw new Error(`Slot '${cleanId}' not found.`);
+  }
+
+  if (existing.occupied === 1 || existing.vehicleNumber) {
+    throw new Error(`Cannot disable slot '${cleanId}' while occupied by vehicle ${existing.vehicleNumber}.`);
+  }
+
+  const isCurrentlyDisabled = existing.status === 'Disabled' || existing.isDisabled === 1;
+  const nextStatus = isCurrentlyDisabled ? 'Available' : 'Disabled';
+  const nextIsDisabled = isCurrentlyDisabled ? 0 : 1;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    UPDATE parking_slots SET
+      status = ?, isDisabled = ?, updatedAt = ?
+    WHERE id = ?
+  `).run(nextStatus, nextIsDisabled, now, existing.id);
+
+  const updated = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(existing.id);
+  return {
+    ...updated,
+    occupied: Boolean(updated.occupied),
+    isPending: Boolean(updated.isPending),
+    isDisabled: Boolean(updated.isDisabled || updated.status === 'Disabled')
+  };
+}
+
+/**
+ * Delete a slot only if it has no active parked vehicle or dependent records
+ */
+export function dbDeleteParkingSlot(id) {
+  const db = getDatabase();
+  const cleanId = String(id).trim().toUpperCase();
+  const existing = db.prepare('SELECT * FROM parking_slots WHERE upper(id) = ?').get(cleanId);
+  if (!existing) {
+    throw new Error(`Slot '${cleanId}' not found.`);
+  }
+
+  // Active vehicle protection
+  if (existing.occupied === 1 || existing.vehicleNumber) {
+    throw new Error(`Cannot delete slot '${cleanId}': Active vehicle ${existing.vehicleNumber} is currently parked here. Check out the vehicle first.`);
+  }
+
+  // Active detection pending protection
+  if (existing.isPending === 1 || existing.status === 'Detection Pending') {
+    throw new Error(`Cannot delete slot '${cleanId}': An active optical detection is currently pending in this bay.`);
+  }
+
+  // Check dependent active activity records
+  const activeAct = db.prepare("SELECT vehicleNumber FROM activities WHERE slot = ? AND status = 'Parked'").get(cleanId);
+  if (activeAct) {
+    throw new Error(`Cannot delete slot '${cleanId}': Active parking record exists for vehicle ${activeAct.vehicleNumber}.`);
+  }
+
+  db.prepare('DELETE FROM parking_slots WHERE upper(id) = ?').run(cleanId);
+  return { success: true, message: `Parking slot '${cleanId}' has been deleted from inventory.` };
 }
 
 export function dbGetActivities() {

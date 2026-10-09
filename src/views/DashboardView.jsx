@@ -310,10 +310,10 @@ export default function DashboardView() {
           <div>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500 }}>Total Slots</div>
             <div style={{ fontSize: '24px', fontWeight: 800, color: '#FFFFFF', fontFamily: 'var(--font-heading)', lineHeight: '1.1' }}>
-              15
+              {metrics.totalSlots}
             </div>
             <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '3px' }}>
-              10 Two-Wheeler | 5 Four-Wheeler
+              {metrics.twoWheelersTotal} Two-Wheeler | {metrics.fourWheelersTotal} Four-Wheeler{metrics.customZonesTotal > 0 ? ` | ${metrics.customZonesTotal} Custom` : ''}
             </div>
           </div>
         </div>

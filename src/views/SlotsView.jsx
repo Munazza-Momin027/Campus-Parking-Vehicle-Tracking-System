@@ -59,6 +59,11 @@ export default function SlotsView() {
       return 'Selected';
     }
 
+    // Check if administratively disabled
+    if (slot.isDisabled) {
+      return 'Disabled';
+    }
+
     // Check backing parking record
     const record = getSlotRecord(slot.id);
     if (record) {
@@ -88,6 +93,7 @@ export default function SlotsView() {
       if (filterType === 'available') return state === 'Available';
       if (filterType === 'occupied') return state === 'Occupied' || (state === 'Selected' && s.occupied);
       if (filterType === 'pending') return state === 'Detection Pending' || (state === 'Selected' && s.isPending);
+      if (filterType === 'disabled') return state === 'Disabled';
       if (filterType === 'two-wheeler') return s.zone === 'two-wheeler';
       if (filterType === 'four-wheeler') return s.zone === 'four-wheeler';
       return true;
@@ -159,6 +165,17 @@ export default function SlotsView() {
           bgGradient: 'linear-gradient(145deg, rgba(120, 53, 15, 0.45) 0%, rgba(69, 26, 3, 0.75) 100%)',
           accent: 'var(--orange-bright)'
         };
+      case 'Disabled':
+        return {
+          label: 'Disabled',
+          badgeText: '⚫ DISABLED',
+          badgeColor: '#94a3b8',
+          badgeBg: 'rgba(148, 163, 184, 0.15)',
+          border: '1px dashed rgba(148, 163, 184, 0.4)',
+          glow: 'none',
+          bgGradient: 'linear-gradient(145deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.75) 100%)',
+          accent: '#94a3b8'
+        };
       default:
         return {
           label: 'Available',
@@ -200,37 +217,67 @@ export default function SlotsView() {
             </span>
           </div>
           <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Real-time multi-zone occupancy map (Two-Wheeler T-01..T-10, Four-Wheeler F-01..F-05) synchronized with parking activity audit records
+            Real-time multi-zone occupancy map ({metrics.totalSlots} Slots: {metrics.twoWheelersTotal} Two-Wheeler, {metrics.fourWheelersTotal} Four-Wheeler{metrics.customZonesTotal > 0 ? `, ${metrics.customZonesTotal} Custom` : ''}) synchronized with live telemetry & database
           </p>
         </div>
 
-        {/* 4 Slot State Legend Indicators */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          background: 'rgba(15, 23, 42, 0.8)',
-          padding: '8px 16px',
-          borderRadius: '10px',
-          border: '1px solid var(--border-subtle)',
-          fontSize: '11.5px',
-          flexWrap: 'wrap'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--green-bright)', boxShadow: '0 0 6px var(--green-bright)' }} />
-            <span style={{ color: '#FFFFFF', fontWeight: 600 }}>Available ({metrics.available})</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--red-bright)', boxShadow: '0 0 6px var(--red-bright)' }} />
-            <span style={{ color: '#FFFFFF', fontWeight: 600 }}>Occupied ({metrics.occupied})</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--cyan-primary)', boxShadow: '0 0 6px var(--cyan-primary)' }} />
-            <span style={{ color: 'var(--cyan-primary)', fontWeight: 600 }}>Selected ({selectedSlotId ? 1 : 0})</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--orange-bright)', boxShadow: '0 0 6px var(--orange-bright)' }} className="animate-pulse" />
-            <span style={{ color: 'var(--orange-bright)', fontWeight: 600 }}>Detection Pending ({metrics.pending || 0})</span>
+        {/* Action Button & Legend Indicators */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setCurrentTab('settings')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '7px',
+              background: 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(59, 130, 246, 0.2))',
+              border: '1px solid var(--border-neon-cyan)',
+              color: 'var(--cyan-primary)',
+              padding: '8px 14px',
+              borderRadius: '9px',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            className="hover-bright"
+          >
+            <Sliders size={14} /> + Manage & Add Slots
+          </button>
+
+          {/* 4 Slot State Legend Indicators */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            background: 'rgba(15, 23, 42, 0.8)',
+            padding: '8px 16px',
+            borderRadius: '10px',
+            border: '1px solid var(--border-subtle)',
+            fontSize: '11.5px',
+            flexWrap: 'wrap'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--green-bright)', boxShadow: '0 0 6px var(--green-bright)' }} />
+              <span style={{ color: '#FFFFFF', fontWeight: 600 }}>Available ({metrics.available})</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--red-bright)', boxShadow: '0 0 6px var(--red-bright)' }} />
+              <span style={{ color: '#FFFFFF', fontWeight: 600 }}>Occupied ({metrics.occupied})</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--cyan-primary)', boxShadow: '0 0 6px var(--cyan-primary)' }} />
+              <span style={{ color: 'var(--cyan-primary)', fontWeight: 600 }}>Selected ({selectedSlotId ? 1 : 0})</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--orange-bright)', boxShadow: '0 0 6px var(--orange-bright)' }} className="animate-pulse" />
+              <span style={{ color: 'var(--orange-bright)', fontWeight: 600 }}>Detection Pending ({metrics.pending || 0})</span>
+            </div>
+            {metrics.disabled > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#94a3b8' }} />
+                <span style={{ color: '#94a3b8', fontWeight: 600 }}>Disabled ({metrics.disabled})</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -244,6 +291,7 @@ export default function SlotsView() {
           { id: 'pending', label: `🟡 Detection Pending (${metrics.pending || 0})` },
           { id: 'two-wheeler', label: `Two-Wheeler Zone T (${metrics.twoWheelersTotal})` },
           { id: 'four-wheeler', label: `Four-Wheeler Zone F (${metrics.fourWheelersTotal})` },
+          ...(metrics.disabled > 0 ? [{ id: 'disabled', label: `⚫ Disabled (${metrics.disabled})` }] : []),
         ].map(tab => (
           <button
             key={tab.id}
@@ -316,9 +364,9 @@ export default function SlotsView() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '26px' }}>
             
             {/* ============================================================ */}
-            {/* ZONE T: TWO-WHEELER ZONE (T-01 THROUGH T-10) — 10 SLOTS       */}
+            {/* ZONE T: TWO-WHEELER ZONE                                     */}
             {/* ============================================================ */}
-            {(filterType === 'all' || filterType === 'two-wheeler' || filterType === 'available' || filterType === 'occupied' || filterType === 'pending') && (
+            {(filterType === 'all' || filterType === 'two-wheeler' || filterType === 'available' || filterType === 'occupied' || filterType === 'pending' || filterType === 'disabled') && (
               <div>
                 <div style={{
                   display: 'flex',
@@ -343,20 +391,20 @@ export default function SlotsView() {
                     </div>
                     <div>
                       <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#FFFFFF' }}>
-                        Two-Wheeler Zone (Slots T-01 to T-10)
+                        Two-Wheeler Zone (Zone T)
                       </span>
                       <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                        Motorcycles & Scooters Bay (10 Slots Total)
+                        Motorcycles & Scooters Bay ({metrics.twoWheelersTotal} Slots Total)
                       </span>
                     </div>
                   </div>
 
                   <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                    Occupancy: <strong style={{ color: '#FFFFFF' }}>{metrics.twoWheelersOccupied}/10</strong> ({Math.round((metrics.twoWheelersOccupied / 10) * 100)}%)
+                    Occupancy: <strong style={{ color: '#FFFFFF' }}>{metrics.twoWheelersOccupied}/{metrics.twoWheelersTotal}</strong> ({metrics.twoWheelersTotal > 0 ? Math.round((metrics.twoWheelersOccupied / metrics.twoWheelersTotal) * 100) : 0}%)
                   </span>
                 </div>
 
-                {/* 10 Two-Wheeler Slot Cards Grid (2 rows of 5) */}
+                {/* Two-Wheeler Slot Cards Grid */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
                   {slots
                     .filter((s) => s.zone === 'two-wheeler')
@@ -366,14 +414,16 @@ export default function SlotsView() {
                       const record = getSlotRecord(slot.id);
 
                       // Display values
-                      const vehicleNum = slot.occupied || (record && record.status === 'Parked')
-                        ? (slot.vehicleNumber || record?.vehicleNumber || 'Occupied')
-                        : state === 'Detection Pending'
-                          ? (slot.vehicleNumber || record?.vehicleNumber || 'Scanning Plate...')
-                          : 'Vacant';
+                      const vehicleNum = state === 'Disabled'
+                        ? 'Disabled'
+                        : (slot.occupied || (record && record.status === 'Parked')
+                          ? (slot.vehicleNumber || record?.vehicleNumber || 'Occupied')
+                          : state === 'Detection Pending'
+                            ? (slot.vehicleNumber || record?.vehicleNumber || 'Scanning Plate...')
+                            : 'Vacant');
 
                       const entryTime = (slot.occupied || state === 'Detection Pending')
-                        ? (slot.entryTime || record?.entryTime || '10:00 AM')
+                        ? (slot.entryTime || record?.entryTime || '—')
                         : '—';
 
                       return (
@@ -492,9 +542,9 @@ export default function SlotsView() {
             )}
 
             {/* ============================================================ */}
-            {/* ZONE F: FOUR-WHEELER ZONE (F-01 THROUGH F-05) — 5 SLOTS       */}
+            {/* ZONE F: FOUR-WHEELER ZONE                                     */}
             {/* ============================================================ */}
-            {(filterType === 'all' || filterType === 'four-wheeler' || filterType === 'available' || filterType === 'occupied' || filterType === 'pending') && (
+            {(filterType === 'all' || filterType === 'four-wheeler' || filterType === 'available' || filterType === 'occupied' || filterType === 'pending' || filterType === 'disabled') && (
               <div>
                 <div style={{
                   display: 'flex',
@@ -519,20 +569,20 @@ export default function SlotsView() {
                     </div>
                     <div>
                       <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#FFFFFF' }}>
-                        Four-Wheeler Zone (Slots F-01 to F-05)
+                        Four-Wheeler Zone (Zone F)
                       </span>
                       <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                        Cars & SUVs Bay (5 Slots Total)
+                        Cars & SUVs Bay ({metrics.fourWheelersTotal} Slots Total)
                       </span>
                     </div>
                   </div>
 
                   <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                    Occupancy: <strong style={{ color: '#FFFFFF' }}>{metrics.fourWheelersOccupied}/5</strong> ({Math.round((metrics.fourWheelersOccupied / 5) * 100)}%)
+                    Occupancy: <strong style={{ color: '#FFFFFF' }}>{metrics.fourWheelersOccupied}/{metrics.fourWheelersTotal}</strong> ({metrics.fourWheelersTotal > 0 ? Math.round((metrics.fourWheelersOccupied / metrics.fourWheelersTotal) * 100) : 0}%)
                   </span>
                 </div>
 
-                {/* 5 Four-Wheeler Slot Cards Grid (1 row of 5) */}
+                {/* Four-Wheeler Slot Cards Grid */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
                   {slots
                     .filter((s) => s.zone === 'four-wheeler')
@@ -542,14 +592,16 @@ export default function SlotsView() {
                       const record = getSlotRecord(slot.id);
 
                       // Display values
-                      const vehicleNum = slot.occupied || (record && record.status === 'Parked')
-                        ? (slot.vehicleNumber || record?.vehicleNumber || 'Occupied')
-                        : state === 'Detection Pending'
-                          ? (slot.vehicleNumber || record?.vehicleNumber || 'Scanning Plate...')
-                          : 'Vacant';
+                      const vehicleNum = state === 'Disabled'
+                        ? 'Disabled'
+                        : (slot.occupied || (record && record.status === 'Parked')
+                          ? (slot.vehicleNumber || record?.vehicleNumber || 'Occupied')
+                          : state === 'Detection Pending'
+                            ? (slot.vehicleNumber || record?.vehicleNumber || 'Scanning Plate...')
+                            : 'Vacant');
 
                       const entryTime = (slot.occupied || state === 'Detection Pending')
-                        ? (slot.entryTime || record?.entryTime || '10:24 AM')
+                        ? (slot.entryTime || record?.entryTime || '—')
                         : '—';
 
                       return (
@@ -666,6 +718,187 @@ export default function SlotsView() {
                 </div>
               </div>
             )}
+
+            {/* ============================================================ */}
+            {/* CUSTOM ZONES: ANY ADMIN-DEFINED PARKING ZONES                */}
+            {/* ============================================================ */}
+            {(() => {
+              const customSlots = slots.filter((s) => s.zone !== 'two-wheeler' && s.zone !== 'four-wheeler');
+              if (customSlots.length === 0) return null;
+
+              const customZoneNames = Array.from(new Set(customSlots.map((s) => s.zone)));
+
+              return customZoneNames.map((cZone) => {
+                const zoneSlots = customSlots.filter((s) => s.zone === cZone);
+                const occupiedCount = zoneSlots.filter((s) => s.occupied).length;
+
+                return (
+                  <div key={cZone}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: '12px',
+                      borderBottom: '1px solid var(--border-subtle)',
+                      paddingBottom: '8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{
+                          width: '26px',
+                          height: '26px',
+                          borderRadius: '6px',
+                          background: 'rgba(168, 85, 247, 0.15)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#C084FC'
+                        }}>
+                          <ParkingSquare size={16} />
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#FFFFFF', textTransform: 'capitalize' }}>
+                            {cZone} Zone
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                            Custom Bay ({zoneSlots.length} Slots Total)
+                          </span>
+                        </div>
+                      </div>
+
+                      <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                        Occupancy: <strong style={{ color: '#FFFFFF' }}>{occupiedCount}/{zoneSlots.length}</strong> ({zoneSlots.length > 0 ? Math.round((occupiedCount / zoneSlots.length) * 100) : 0}%)
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
+                      {zoneSlots.map((slot) => {
+                        const state = getSlotState(slot);
+                        const meta = getStateMeta(state);
+                        const record = getSlotRecord(slot.id);
+
+                        const vehicleNum = state === 'Disabled'
+                          ? 'Disabled'
+                          : (slot.occupied || (record && record.status === 'Parked')
+                            ? (slot.vehicleNumber || record?.vehicleNumber || 'Occupied')
+                            : state === 'Detection Pending'
+                              ? (slot.vehicleNumber || record?.vehicleNumber || 'Scanning Plate...')
+                              : 'Vacant');
+
+                        const entryTime = (slot.occupied || state === 'Detection Pending')
+                          ? (slot.entryTime || record?.entryTime || '—')
+                          : '—';
+
+                        return (
+                          <div
+                            key={slot.id}
+                            onClick={() => handleSlotClick(slot)}
+                            style={{
+                              background: meta.bgGradient,
+                              border: meta.border,
+                              borderRadius: '12px',
+                              padding: '16px 10px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '10px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                              boxShadow: meta.glow,
+                              position: 'relative',
+                              userSelect: 'none'
+                            }}
+                            className="hover-bright"
+                          >
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              width: '100%',
+                              padding: '0 4px'
+                            }}>
+                              <span style={{
+                                fontSize: '13px',
+                                fontWeight: 900,
+                                fontFamily: 'var(--font-mono)',
+                                color: '#FFFFFF',
+                                letterSpacing: '0.04em'
+                              }}>
+                                {slot.id}
+                              </span>
+
+                              <span style={{
+                                fontSize: '9px',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                background: meta.badgeBg,
+                                color: meta.badgeColor,
+                                fontWeight: 800,
+                                textTransform: 'uppercase',
+                                fontFamily: 'var(--font-mono)',
+                                letterSpacing: '0.03em'
+                              }}>
+                                {meta.badgeText}
+                              </span>
+                            </div>
+
+                            <div style={{
+                              width: '46px',
+                              height: '46px',
+                              borderRadius: '8px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: meta.accent
+                            }}>
+                              {slot.type === 'Two-Wheeler' ? <Bike size={28} strokeWidth={2.2} /> : <Car size={30} strokeWidth={2.2} />}
+                            </div>
+
+                            <div style={{
+                              textAlign: 'center',
+                              width: '100%',
+                              padding: '0 2px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '2px'
+                            }}>
+                              <div style={{
+                                fontSize: '11.5px',
+                                fontWeight: 800,
+                                fontFamily: 'var(--font-mono)',
+                                color: slot.occupied ? '#FFFFFF' : 'var(--text-dim)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {vehicleNum}
+                              </div>
+
+                              <div style={{
+                                fontSize: '9.5px',
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '4px'
+                              }}>
+                                <span>{slot.type || 'Custom'}</span>
+                                {entryTime !== '—' && (
+                                  <>
+                                    <span>•</span>
+                                    <span style={{ color: meta.accent }}>{entryTime}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
 
           </div>
         </div>
@@ -895,6 +1128,54 @@ export default function SlotsView() {
                     <Printer size={13} /> Print Telemetry Ticket
                   </button>
                 </div>
+              </div>
+            ) : selectedSlot.isDisabled ? (
+              /* Administratively Disabled Slot Details */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'center', padding: '20px 0' }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '50%',
+                  background: 'rgba(148, 163, 184, 0.12)',
+                  color: '#94a3b8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto'
+                }}>
+                  <AlertTriangle size={26} />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
+                    Slot {selectedSlot.id} is Disabled
+                  </div>
+                  <p style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    This slot has been administratively taken offline for maintenance or reserve. It is not eligible for automatic gate assignment.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setCurrentTab('settings')}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid var(--border-light)',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    fontSize: '11.5px',
+                    borderRadius: '8px',
+                    padding: '9px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    marginTop: '8px'
+                  }}
+                  className="hover-bright"
+                >
+                  <Sliders size={13} /> Manage / Enable in Settings
+                </button>
               </div>
             ) : (
               /* Vacant Slot Telemetry Details */

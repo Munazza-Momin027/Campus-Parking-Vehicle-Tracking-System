@@ -223,10 +223,178 @@ def get_slots():
 
     return jsonify({
         'total_slots': len(result),
-        'two_wheelers_total': 10,
-        'four_wheelers_total': 5,
+        'two_wheelers_total': len([s for s in result if s.get('zone') == 'two-wheeler']),
+        'four_wheelers_total': len([s for s in result if s.get('zone') == 'four-wheeler']),
         'slots': result
     })
+
+
+@app.route('/api/parking-slots/next-id', methods=['GET'])
+def get_next_parking_slot_id():
+    vtype = request.args.get('type', 'Four-Wheeler')
+    is_two = 'two' in vtype.lower() or 'bike' in vtype.lower()
+    prefix = 'T-' if is_two else 'F-'
+    min_start = 10 if is_two else 5
+
+    conn = get_db_connection()
+    if conn:
+        rows = conn.execute("SELECT id FROM parking_slots").fetchall()
+        max_num = min_start
+        for r in rows:
+            sid = r['id'].upper()
+            if sid.startswith(prefix):
+                try:
+                    num = int(sid.split('-')[1])
+                    if num > max_num:
+                        max_num = num
+                except:
+                    pass
+        conn.close()
+        return jsonify({'success': True, 'nextId': f"{prefix}{str(max_num + 1).zfill(2)}"})
+
+    return jsonify({'success': True, 'nextId': 'T-11' if is_two else 'F-06'})
+
+
+@app.route('/api/parking-slots', methods=['GET', 'POST'])
+def manage_parking_slots_db():
+    conn = get_db_connection()
+    if request.method == 'GET':
+        if conn:
+            rows = conn.execute("SELECT * FROM parking_slots ORDER BY id ASC").fetchall()
+            slots_list = [dict(r) for r in rows]
+            conn.close()
+            return jsonify({'success': True, 'total': len(slots_list), 'data': slots_list})
+        return jsonify({'success': True, 'total': len(BACKEND_SLOTS_DEF), 'data': BACKEND_SLOTS_DEF})
+
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        slot_id = data.get('id', '').strip().upper()
+        if not slot_id:
+            return jsonify({'success': False, 'error': 'Slot ID is required.'}), 400
+
+        if conn:
+            existing = conn.execute("SELECT id FROM parking_slots WHERE upper(id) = ?", (slot_id,)).fetchone()
+            if existing:
+                conn.close()
+                return jsonify({'success': False, 'error': f"Duplicate Slot ID: Slot '{slot_id}' already exists."}), 409
+
+            is_two = 'two' in str(data.get('type', '')).lower() or slot_id.startswith('T-')
+            vtype = 'Two-Wheeler' if is_two else 'Four-Wheeler'
+            zone = data.get('zone', 'two-wheeler' if is_two else 'four-wheeler').strip().lower()
+            gate_cat = data.get('gateCategory', 'Universal')
+            floor = data.get('floor', 'Ground Level')
+            row = data.get('row', '')
+            location = data.get('location', f"{floor} {slot_id}")
+            sensor = data.get('sensorType', 'System-Managed')
+            status = 'Disabled' if data.get('status') == 'Disabled' else 'Available'
+            is_disabled = 1 if status == 'Disabled' else 0
+            now = datetime.now().isoformat()
+
+            conn.execute("""
+                INSERT INTO parking_slots 
+                (id, zone, type, occupied, isPending, status, vehicleNumber, driver, category, entryTime, gate, gateCategory, floor, row, location, sensorType, isDisabled, createdAt, updatedAt)
+                VALUES (?, ?, ?, 0, 0, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (slot_id, zone, vtype, status, gate_cat, floor, row, location, sensor, is_disabled, now, now))
+            conn.commit()
+
+            created = conn.execute("SELECT * FROM parking_slots WHERE id = ?", (slot_id,)).fetchone()
+            res = dict(created)
+            conn.close()
+            return jsonify({'success': True, 'message': f"Slot {slot_id} added.", 'data': res}), 201
+
+        return jsonify({'success': True, 'message': 'Slot registered in memory.'}), 201
+
+
+@app.route('/api/parking-slots/<slot_id>', methods=['PATCH', 'PUT', 'DELETE'])
+def manage_single_parking_slot(slot_id):
+    clean_id = slot_id.strip().upper()
+    conn = get_db_connection()
+
+    if request.method == 'DELETE':
+        if conn:
+            existing = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (clean_id,)).fetchone()
+            if not existing:
+                conn.close()
+                return jsonify({'success': False, 'error': f"Slot '{clean_id}' not found."}), 404
+
+            if existing['occupied'] or existing['vehicleNumber']:
+                conn.close()
+                return jsonify({'success': False, 'error': f"Cannot delete slot '{clean_id}' while vehicle {existing['vehicleNumber']} is parked."}), 400
+
+            conn.execute("DELETE FROM parking_slots WHERE upper(id) = ?", (clean_id,))
+            conn.commit()
+            conn.close()
+            return jsonify({'success': True, 'message': f"Slot '{clean_id}' deleted."})
+        return jsonify({'success': True, 'message': f"Slot '{clean_id}' deleted."})
+
+    # PATCH or PUT
+    data = request.get_json() or {}
+    if conn:
+        existing = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (clean_id,)).fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({'success': False, 'error': f"Slot '{clean_id}' not found."}), 404
+
+        if existing['occupied'] or existing['vehicleNumber']:
+            if data.get('status') == 'Available' or data.get('occupied') is False:
+                conn.close()
+                return jsonify({'success': False, 'error': f"Cannot mark slot '{clean_id}' available while occupied by {existing['vehicleNumber']}."}), 400
+
+        vtype = data.get('type', existing['type'])
+        zone = data.get('zone', existing['zone'])
+        gate_cat = data.get('gateCategory', existing['gateCategory'] or 'Universal')
+        floor = data.get('floor', existing['floor'] or 'Ground Level')
+        row = data.get('row', existing['row'] or '')
+        location = data.get('location', existing['location'] or '')
+        sensor = data.get('sensorType', existing['sensorType'] or 'System-Managed')
+        status = data.get('status', existing['status'])
+        is_disabled = 1 if status == 'Disabled' else 0
+        now = datetime.now().isoformat()
+
+        conn.execute("""
+            UPDATE parking_slots SET
+                type = ?, zone = ?, gateCategory = ?, floor = ?, row = ?,
+                location = ?, sensorType = ?, status = ?, isDisabled = ?, updatedAt = ?
+            WHERE upper(id) = ?
+        """, (vtype, zone, gate_cat, floor, row, location, sensor, status, is_disabled, now, clean_id))
+        conn.commit()
+
+        updated = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (clean_id,)).fetchone()
+        res = dict(updated)
+        conn.close()
+        return jsonify({'success': True, 'message': f"Slot '{clean_id}' updated.", 'data': res})
+
+    return jsonify({'success': True, 'message': 'Slot updated.'})
+
+
+@app.route('/api/parking-slots/<slot_id>/status', methods=['PATCH', 'POST'])
+def toggle_single_slot_status(slot_id):
+    clean_id = slot_id.strip().upper()
+    conn = get_db_connection()
+    if conn:
+        existing = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (clean_id,)).fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({'success': False, 'error': f"Slot '{clean_id}' not found."}), 404
+
+        if existing['occupied'] or existing['vehicleNumber']:
+            conn.close()
+            return jsonify({'success': False, 'error': f"Cannot disable slot '{clean_id}' while vehicle {existing['vehicleNumber']} is parked."}), 400
+
+        is_disabled = existing['isDisabled'] == 1 or existing['status'] == 'Disabled'
+        new_status = 'Available' if is_disabled else 'Disabled'
+        new_disabled = 0 if is_disabled else 1
+        now = datetime.now().isoformat()
+
+        conn.execute("UPDATE parking_slots SET status = ?, isDisabled = ?, updatedAt = ? WHERE upper(id) = ?",
+                     (new_status, new_disabled, now, clean_id))
+        conn.commit()
+        updated = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (clean_id,)).fetchone()
+        res = dict(updated)
+        conn.close()
+        return jsonify({'success': True, 'message': f"Slot status set to {new_status}.", 'data': res})
+
+    return jsonify({'success': True, 'message': 'Status toggled.'})
 
 
 @app.route('/api/records', methods=['GET', 'POST'])

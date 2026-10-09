@@ -26,7 +26,7 @@ export default function Sidebar() {
     { id: 'cctv', label: 'Live CCTV Monitoring', icon: Video, badge: '2 Feeds' },
     { id: 'checkin', label: 'Vehicle Check-In', icon: LogIn },
     { id: 'checkout', label: 'Vehicle Check-Out', icon: LogOut },
-    { id: 'slots', label: 'Parking Slots', icon: ParkingSquare, badge: `${metrics.occupied}/15` },
+    { id: 'slots', label: 'Parking Slots', icon: ParkingSquare, badge: `${metrics.occupied}/${metrics.totalSlots || 15}` },
     { id: 'finder', label: 'Vehicle Finder', icon: Search },
     { id: 'summary', label: 'Daily Summary', icon: BarChart3 },
     { id: 'reports', label: 'Reports', icon: FileText },
