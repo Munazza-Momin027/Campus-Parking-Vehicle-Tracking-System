@@ -7,12 +7,13 @@ import {
   Volume2,
   CheckCircle,
   Save,
-  RotateCcw
+  RotateCcw,
+  Database
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
 export default function SettingsView() {
-  const { settings, setSettings, soundEnabled, setSoundEnabled } = useApp();
+  const { settings, setSettings, soundEnabled, setSoundEnabled, resetDatabaseToDefaults, dbStatus, isDbConnected } = useApp();
   const [formState, setFormState] = useState({ ...settings });
   const [savedNotice, setSavedNotice] = useState(false);
 
@@ -235,15 +236,59 @@ export default function SettingsView() {
           </div>
         </div>
 
-        {/* Save Bar */}
-        <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-          <button
-            type="submit"
-            className="btn-primary"
-            style={{ padding: '10px 24px' }}
-          >
-            <Save size={16} /> Save Configuration
-          </button>
+        {/* Save Bar & DB Maintenance */}
+        <div style={{
+          gridColumn: 'span 2',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          padding: '14px 18px',
+          background: 'rgba(8, 14, 28, 0.7)',
+          border: '1px solid var(--border-light)',
+          borderRadius: '10px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Database size={15} style={{ color: isDbConnected ? 'var(--green-bright)' : '#EF4444' }} />
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Storage Engine: <strong style={{ color: '#FFFFFF' }}>SQLite 3 (ACID Persistent)</strong> • File: <code style={{ color: 'var(--cyan-primary)', fontSize: '11px' }}>database/cpvts.db</code>
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Are you sure you want to restore the SQLite database to factory default institutional seed records? All modifications will be reset.')) {
+                  resetDatabaseToDefaults();
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 16px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                color: '#EF4444',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <RotateCcw size={14} /> Restore Factory DB Defaults
+            </button>
+
+            <button
+              type="submit"
+              className="btn-primary"
+              style={{ padding: '9px 22px' }}
+            >
+              <Save size={15} /> Save Configuration to SQLite
+            </button>
+          </div>
         </div>
 
       </form>

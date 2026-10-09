@@ -20,7 +20,8 @@ import {
   Info,
   Check,
   Tag,
-  Building
+  Building,
+  Database
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
@@ -145,6 +146,22 @@ export default function RegisteredVehiclesView() {
             }}>
               <ShieldCheck size={13} />
               ADMIN OPERATION ONLY
+            </span>
+            <span style={{
+              fontSize: '11px',
+              fontFamily: 'var(--font-mono)',
+              background: 'rgba(16, 185, 129, 0.15)',
+              color: 'var(--green-bright)',
+              padding: '3px 9px',
+              borderRadius: '6px',
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+              fontWeight: 800,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <Database size={13} />
+              SQLITE DATABASE PERSISTED
             </span>
           </div>
           <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '4px' }}>

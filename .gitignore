@@ -30,3 +30,8 @@ scratch/
 Thumbs.db
 .vscode/
 .idea/
+
+# SQLite database and temporary runtime files
+*.db
+*.db-shm
+*.db-wal

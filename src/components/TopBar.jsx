@@ -9,7 +9,8 @@ import {
   CheckCircle,
   X,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  Database
 } from 'lucide-react';
 
 export default function TopBar() {
@@ -25,7 +26,10 @@ export default function TopBar() {
     setInspectItem,
     settings,
     pipelineMode,
-    setPipelineMode
+    setPipelineMode,
+    isDbConnected,
+    dbStatus,
+    lastSavedNotice
   } = useApp();
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -325,6 +329,50 @@ export default function TopBar() {
             marginLeft: '2px'
           }}>18ms</span>
         </div>
+
+        {/* Persistent SQLite Database Badge */}
+        <div
+          title={dbStatus ? `SQLite DB Active: ${dbStatus.counts?.registeredVehicles} vehicles, ${dbStatus.counts?.occupiedSlots}/15 occupied bays, file: ${dbStatus.dbFile}` : 'Persistent SQLite Database Active'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '7px',
+            background: isDbConnected ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+            border: isDbConnected ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(239, 68, 68, 0.4)',
+            padding: '5px 11px',
+            borderRadius: '8px',
+            cursor: 'default'
+          }}
+        >
+          <Database size={13} style={{ color: isDbConnected ? 'var(--green-bright)' : '#EF4444' }} />
+          <span style={{
+            fontSize: '11px',
+            fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+            color: isDbConnected ? 'var(--green-bright)' : '#EF4444'
+          }}>
+            {isDbConnected ? 'SQLITE DB: CONNECTED' : 'SQLITE DB: OFFLINE'}
+          </span>
+        </div>
+
+        {/* Database Floating Save Toast */}
+        {lastSavedNotice && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'rgba(0, 240, 255, 0.15)',
+            border: '1px solid var(--border-neon-cyan)',
+            color: 'var(--cyan-primary)',
+            padding: '4px 10px',
+            borderRadius: '6px',
+            fontSize: '11px',
+            fontWeight: 700,
+            animation: 'fadeIn 0.2s ease'
+          }}>
+            <CheckCircle size={13} /> {lastSavedNotice}
+          </div>
+        )}
 
         {/* Notifications Bell */}
         <div ref={notifRef} style={{ position: 'relative' }}>

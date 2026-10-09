@@ -11,12 +11,24 @@ from flask_cors import CORS
 import json
 import time
 import hashlib
+import os
+import sqlite3
 from datetime import datetime
 
 from pipeline import CpvtsPipelineManager
 
 app = Flask(__name__)
 CORS(app)
+
+# Authoritative SQLite Database File Path
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'database', 'cpvts.db')
+
+def get_db_connection():
+    if os.path.exists(DB_PATH):
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+    return None
 
 # Initialize Pipeline Manager (defaults to honest SIMULATION mode until actual cameras & models are attached)
 pipeline_manager = CpvtsPipelineManager(mode="SIMULATION")
