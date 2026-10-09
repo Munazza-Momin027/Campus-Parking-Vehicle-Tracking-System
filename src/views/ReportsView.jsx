@@ -138,6 +138,9 @@ export default function ReportsView() {
               <option value="Student">Students Only</option>
               <option value="Staff">Faculty / Staff Only</option>
               <option value="Visitor">Visitors Only</option>
+              <option value="VIP">⭐ VIP Dignitaries Only</option>
+              <option value="Emergency">🚨 Emergency Units Only</option>
+              <option value="Official Guest">🏛️ Official Guests Only</option>
             </select>
           </div>
 

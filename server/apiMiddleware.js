@@ -35,7 +35,15 @@ import {
   dbCheckInTransaction,
   dbCheckOutTransaction,
   dbSearchVehicles,
-  dbResetToDefaults
+  dbResetToDefaults,
+  dbGetVipReservations,
+  dbGetVipReservationById,
+  dbGetActiveReservationBySlotId,
+  dbGetActiveReservationByVehicle,
+  dbCreateVipReservation,
+  dbReleaseVipReservation,
+  dbUpdateVipReservationStatus,
+  dbReviewExpiredReservations
 } from './database.js';
 
 // Helper to read and parse JSON body
@@ -118,6 +126,7 @@ export function cpvtsBackendApiPlugin() {
               database: dbGetStatus(),
               registeredVehicles: dbGetRegisteredVehicles(),
               slots: dbGetSlots(),
+              vipReservations: dbGetVipReservations(),
               activities: dbGetActivities(),
               gateStats: dbGetGateStats(),
               settings: dbGetSettings(),
@@ -138,6 +147,7 @@ export function cpvtsBackendApiPlugin() {
               database: status,
               registeredVehicles: dbGetRegisteredVehicles(),
               slots: dbGetSlots(),
+              vipReservations: dbGetVipReservations(),
               activities: dbGetActivities(),
               gateStats: dbGetGateStats(),
               settings: dbGetSettings(),
@@ -282,6 +292,111 @@ export function cpvtsBackendApiPlugin() {
               }
               return;
             }
+          }
+
+          // -------------------------------------------------------------
+          // 6b. /api/vip-reservations - Fast-Track VIP & Emergency Management
+          // -------------------------------------------------------------
+          const getAuthContext = (req, body = {}) => {
+            const roleHeader = req.headers['x-user-role'];
+            const nameHeader = req.headers['x-user-name'];
+            const userRole = roleHeader || body.userRole || body.authorizedRole || 'Security';
+            const userName = nameHeader || body.userName || body.officerName || 'Officer Raj Sharma';
+            return { userRole, userName };
+          };
+
+          // GET /api/vip-reservations
+          if (pathname === '/api/vip-reservations' && method === 'GET') {
+            const status = url.searchParams.get('status');
+            const slotId = url.searchParams.get('slotId');
+            const reservationType = url.searchParams.get('type') || url.searchParams.get('reservationType');
+            const vehicleNumber = url.searchParams.get('vehicleNumber');
+
+            const reservations = dbGetVipReservations({ status, slotId, reservationType, vehicleNumber });
+            sendJson(res, {
+              success: true,
+              total: reservations.length,
+              data: reservations
+            });
+            return;
+          }
+
+          // POST /api/vip-reservations
+          if (pathname === '/api/vip-reservations' && method === 'POST') {
+            try {
+              const body = await readJson(req);
+              const { userRole, userName } = getAuthContext(req, body);
+
+              const created = dbCreateVipReservation(body, userRole, userName);
+              sendJson(res, {
+                success: true,
+                message: `Slot ${created.slotId} reserved under ${created.reservationType} protocol.`,
+                data: created
+              }, 201);
+            } catch (err) {
+              const isForbidden = err.message.toLowerCase().includes('forbidden') || err.message.toLowerCase().includes('unauthorized');
+              const isConflict = err.message.toLowerCase().includes('already reserved');
+              const statusCode = isForbidden ? 403 : (isConflict ? 409 : 400);
+              sendJson(res, { success: false, error: err.message }, statusCode);
+            }
+            return;
+          }
+
+          // PATCH /api/vip-reservations/:id/release
+          const resReleaseMatch = pathname.match(/^\/api\/vip-reservations\/([^\/]+)\/release$/);
+          if (resReleaseMatch && (method === 'PATCH' || method === 'POST')) {
+            try {
+              const resId = decodeURIComponent(resReleaseMatch[1]);
+              const body = await readJson(req);
+              const { userRole, userName } = getAuthContext(req, body);
+
+              const result = dbReleaseVipReservation(resId, userRole, userName, body.releaseNotes || body.reason);
+              sendJson(res, {
+                success: true,
+                message: `Reservation ${resId} released successfully.`,
+                data: result
+              });
+            } catch (err) {
+              const isForbidden = err.message.toLowerCase().includes('forbidden') || err.message.toLowerCase().includes('unauthorized');
+              const statusCode = isForbidden ? 403 : 400;
+              sendJson(res, { success: false, error: err.message }, statusCode);
+            }
+            return;
+          }
+
+          // PATCH /api/vip-reservations/:id/status
+          const resStatusMatch = pathname.match(/^\/api\/vip-reservations\/([^\/]+)\/status$/);
+          if (resStatusMatch && (method === 'PATCH' || method === 'POST')) {
+            try {
+              const resId = decodeURIComponent(resStatusMatch[1]);
+              const body = await readJson(req);
+              const { userRole, userName } = getAuthContext(req, body);
+
+              const updated = dbUpdateVipReservationStatus(resId, body.status, userRole, userName);
+              sendJson(res, {
+                success: true,
+                message: `Reservation ${resId} status updated to ${updated.status}.`,
+                data: updated
+              });
+            } catch (err) {
+              const isForbidden = err.message.toLowerCase().includes('forbidden') || err.message.toLowerCase().includes('unauthorized');
+              const statusCode = isForbidden ? 403 : 400;
+              sendJson(res, { success: false, error: err.message }, statusCode);
+            }
+            return;
+          }
+
+          // GET /api/vip-reservations/:id
+          const resDetailMatch = pathname.match(/^\/api\/vip-reservations\/([^\/]+)$/);
+          if (resDetailMatch && method === 'GET') {
+            const resId = decodeURIComponent(resDetailMatch[1]);
+            const reservation = dbGetVipReservationById(resId);
+            if (!reservation) {
+              sendJson(res, { success: false, error: `Reservation '${resId}' not found.` }, 404);
+              return;
+            }
+            sendJson(res, { success: true, data: reservation });
+            return;
           }
 
           // -------------------------------------------------------------

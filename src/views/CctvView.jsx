@@ -33,7 +33,8 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   ShieldAlert,
-  Tag
+  Tag,
+  Crown
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
@@ -255,6 +256,27 @@ export default function CctvView() {
       thumb: '/thumb_bike.png',
       is_simulated: true,
       provenance: 'GATE 2 (STAFF) • ANPR VERIFIED'
+    },
+
+    // Gate 2 VIP Fast-Track Protocol
+    entry_vip_dignitary: {
+      key: 'entry_vip_dignitary',
+      gate: 'Staff',
+      title: '⭐ VIP Dignitary Vehicle Detected',
+      plate: 'KA-22-VIP-0001',
+      vehicleType: 'Four-Wheeler',
+      category: 'VIP',
+      driver: 'Hon. Vice Chancellor / State Dignitary',
+      confidence: '99.8%',
+      direction: 'ENTRY (Fast-Track) — Gate 2',
+      action: 'FAST-TRACK VIP CHECK-IN',
+      camera: 'Staff Gate (VIP Fast-Track) — Entry Camera',
+      camId: 'cam_staff_entry',
+      bbox: '[x: 380, y: 210, w: 360, h: 220]',
+      plateBbox: '[x: 480, y: 340, w: 160, h: 48]',
+      thumb: '/thumb_car.png',
+      is_simulated: true,
+      provenance: 'GATE 2 (VIP FAST-TRACK) • PROTOCOL APPROVED'
     },
 
     // Gate 3: Visitor Gate
@@ -499,7 +521,7 @@ export default function CctvView() {
 
     // Normal valid flow
     setCctvWrongGateAlert(null);
-    if (scenario.action === 'AUTO CHECK-IN') {
+    if (scenario.action === 'AUTO CHECK-IN' || scenario.action === 'FAST-TRACK VIP CHECK-IN') {
       const res = checkInVehicle({
         vehicleNumber: scenario.plate,
         type: scenario.vehicleType,
@@ -856,12 +878,37 @@ export default function CctvView() {
           </span>
         </div>
 
-        {/* 3 Gates + Wrong Gate Rejections Presets Grid */}
+        {/* 3 Gates + VIP Fast-Track + Wrong Gate Presets Grid */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
           gap: '10px'
         }}>
+          {/* VIP Dignitary Fast-Track Preset */}
+          <button
+            onClick={() => handleTriggerScenario('entry_vip_dignitary')}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '8px',
+              background: 'rgba(234, 179, 8, 0.12)',
+              border: '1px solid rgba(234, 179, 8, 0.5)',
+              color: '#FFFFFF',
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '3px',
+              textAlign: 'left',
+              transition: 'all 0.15s ease'
+            }}
+            title="Simulate VIP dignitary fast-track arrival at Gate 2 into reserved Bay F-01"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: '#FACC15' }}>⭐ VIP Dignitary</span>
+              <span style={{ fontSize: '9px', color: '#FACC15', fontWeight: 800 }}>FAST-TRACK</span>
+            </div>
+            <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', fontWeight: 800 }}>KA-22-VIP-0001</span>
+            <span style={{ fontSize: '9.5px', color: 'var(--text-dim)' }}>Bay F-01 • Dignitary</span>
+          </button>
           {/* Gate 1: Student Gate */}
           <button
             onClick={() => handleTriggerScenario('entry_student_car')}

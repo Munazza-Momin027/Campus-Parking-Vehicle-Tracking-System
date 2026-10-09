@@ -397,6 +397,187 @@ def toggle_single_slot_status(slot_id):
     return jsonify({'success': True, 'message': 'Status toggled.'})
 
 
+# ==============================================================================
+# FAST-TRACK VIP & EMERGENCY RESERVATIONS
+# ==============================================================================
+@app.route('/api/vip-reservations', methods=['GET', 'POST'])
+def manage_vip_reservations():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
+
+    if request.method == 'GET':
+        status = request.args.get('status')
+        slot_id = request.args.get('slotId')
+        res_type = request.args.get('type') or request.args.get('reservationType')
+        vehicle_num = request.args.get('vehicleNumber')
+
+        query = "SELECT * FROM vip_reservations"
+        params = []
+        clauses = []
+        if status and status != 'all':
+            clauses.append("status = ?")
+            params.append(status)
+        if slot_id:
+            clauses.append("upper(slotId) = ?")
+            params.append(slot_id.upper())
+        if res_type and res_type != 'all':
+            clauses.append("reservationType = ?")
+            params.append(res_type)
+        if vehicle_num:
+            clauses.append("upper(vehicleNumber) = ?")
+            params.append(vehicle_num.upper())
+
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY createdAt DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        reservations = [dict(r) for r in rows]
+        conn.close()
+        return jsonify({'success': True, 'total': len(reservations), 'data': reservations})
+
+    # POST: Create VIP Reservation
+    data = request.get_json() or {}
+    role_header = request.headers.get('X-User-Role')
+    user_role = str(role_header or data.get('userRole') or 'Security').strip().lower()
+    user_name = str(request.headers.get('X-User-Name') or data.get('userName') or 'Officer Raj Sharma')
+
+    if user_role not in ['security', 'admin']:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Forbidden: Only authorized Security or Admin personnel can create reservations.'}), 403
+
+    slot_id = str(data.get('slotId', '')).strip().upper()
+    if not slot_id:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Parking Slot ID is required.'}), 400
+
+    slot = conn.execute("SELECT * FROM parking_slots WHERE upper(id) = ?", (slot_id,)).fetchone()
+    if not slot:
+        conn.close()
+        return jsonify({'success': False, 'error': f"Slot '{slot_id}' not found."}), 404
+
+    if slot['occupied'] or slot['vehicleNumber']:
+        conn.close()
+        return jsonify({'success': False, 'error': f"Slot '{slot_id}' is occupied and cannot be reserved."}), 400
+
+    if slot['isDisabled'] or slot['status'] == 'Disabled':
+        conn.close()
+        return jsonify({'success': False, 'error': f"Slot '{slot_id}' is disabled."}), 400
+
+    existing = conn.execute("SELECT * FROM vip_reservations WHERE upper(slotId) = ? AND status IN ('Reserved', 'Arrived / Checked In')", (slot_id,)).fetchone()
+    if existing or slot['isReserved']:
+        conn.close()
+        return jsonify({'success': False, 'error': f"Slot '{slot_id}' is already reserved."}), 409
+
+    reason = str(data.get('reason', '')).strip()
+    if not reason:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Reason for reservation is required.'}), 400
+
+    res_type = data.get('reservationType', 'VIP')
+    v_type = data.get('vehicleType', slot['type'])
+    now = datetime.now().isoformat()
+    res_id = data.get('id', f"RES-{res_type[:3].upper()}-{int(time.time())}")
+    clean_plate = data.get('vehicleNumber', '').strip().upper() or None
+
+    conn.execute("""
+        INSERT INTO vip_reservations
+        (id, slotId, reservationType, reservedFor, vehicleNumber, vehicleType, createdBy, createdAt, expectedArrival, expiryTime, reason, status, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reserved', ?)
+    """, (res_id, slot_id, res_type, data.get('reservedFor'), clean_plate, v_type, user_name, now, data.get('expectedArrival'), data.get('expiryTime'), reason, data.get('notes', '')))
+
+    conn.execute("""
+        UPDATE parking_slots SET
+            isReserved = 1, reservationId = ?, reservationType = ?, reservationStatus = 'Reserved', updatedAt = ?
+        WHERE upper(id) = ?
+    """, (res_id, res_type, now, slot_id))
+    conn.commit()
+
+    created = conn.execute("SELECT * FROM vip_reservations WHERE id = ?", (res_id,)).fetchone()
+    res_dict = dict(created)
+    conn.close()
+    return jsonify({'success': True, 'message': f"Slot {slot_id} reserved.", 'data': res_dict}), 201
+
+
+@app.route('/api/vip-reservations/<res_id>', methods=['GET'])
+def get_vip_reservation_details(res_id):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
+    res = conn.execute("SELECT * FROM vip_reservations WHERE id = ?", (res_id,)).fetchone()
+    if not res:
+        conn.close()
+        return jsonify({'success': False, 'error': f"Reservation '{res_id}' not found."}), 404
+    data = dict(res)
+    conn.close()
+    return jsonify({'success': True, 'data': data})
+
+
+@app.route('/api/vip-reservations/<res_id>/release', methods=['PATCH', 'POST'])
+def release_vip_reservation(res_id):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
+
+    data = request.get_json() or {}
+    role_header = request.headers.get('X-User-Role')
+    user_role = str(role_header or data.get('userRole') or 'Security').strip().lower()
+    user_name = str(request.headers.get('X-User-Name') or data.get('userName') or 'Officer Raj Sharma')
+
+    if user_role not in ['security', 'admin']:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Forbidden: Only authorized Security or Admin personnel can release reservations.'}), 403
+
+    res = conn.execute("SELECT * FROM vip_reservations WHERE id = ?", (res_id,)).fetchone()
+    if not res:
+        conn.close()
+        return jsonify({'success': False, 'error': f"Reservation '{res_id}' not found."}), 404
+
+    now = datetime.now().isoformat()
+    notes = data.get('releaseNotes', 'Manual Security Release')
+    conn.execute("""
+        UPDATE vip_reservations SET status = 'Released', releasedBy = ?, releasedAt = ?, notes = notes || ' | ' || ?
+        WHERE id = ?
+    """, (user_name, now, notes, res_id))
+
+    slot = conn.execute("SELECT * FROM parking_slots WHERE id = ?", (res['slotId'],)).fetchone()
+    if slot:
+        is_occ = slot['occupied'] == 1 or bool(slot['vehicleNumber'])
+        next_status = 'Occupied' if is_occ else ('Disabled' if slot['isDisabled'] else 'Available')
+        conn.execute("""
+            UPDATE parking_slots SET
+                isReserved = 0, reservationId = NULL, reservationType = NULL, reservationStatus = NULL, status = ?, updatedAt = ?
+            WHERE id = ?
+        """, (next_status, now, slot['id']))
+
+    conn.commit()
+    updated = conn.execute("SELECT * FROM vip_reservations WHERE id = ?", (res_id,)).fetchone()
+    res_dict = dict(updated)
+    conn.close()
+    return jsonify({'success': True, 'message': f"Reservation {res_id} released.", 'data': res_dict})
+
+
+@app.route('/api/vip-reservations/<res_id>/status', methods=['PATCH', 'POST'])
+def update_vip_reservation_status(res_id):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
+
+    data = request.get_json() or {}
+    new_status = data.get('status')
+    if new_status not in ['Reserved', 'Arrived / Checked In', 'Completed', 'Released', 'Expired']:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+    conn.execute("UPDATE vip_reservations SET status = ? WHERE id = ?", (new_status, res_id))
+    conn.commit()
+    updated = conn.execute("SELECT * FROM vip_reservations WHERE id = ?", (res_id,)).fetchone()
+    res_dict = dict(updated)
+    conn.close()
+    return jsonify({'success': True, 'data': res_dict})
+
+
 @app.route('/api/records', methods=['GET', 'POST'])
 def manage_parking_records():
     """

@@ -119,11 +119,25 @@ export default function CheckInView() {
   // Available slots for selected vehicle type
   const availableSlots = slots.filter(s =>
     !s.occupied &&
+    !s.isDisabled &&
+    !s.isReserved &&
     (manualType === 'Four-Wheeler' ? s.zone === 'four-wheeler' : s.zone === 'two-wheeler')
   );
 
-  // Predefined Ingress Scenarios for All 3 Dedicated Campus Gates + Error Scenarios
+  // Predefined Ingress Scenarios for All Dedicated Campus Gates + Error & VIP Scenarios
   const INGRESS_PRESETS = [
+    // VIP / Emergency Fast-Track Protocol Presets
+    {
+      id: 'vip_dignitary',
+      plate: 'KA-22-VIP-0001',
+      type: 'Four-Wheeler',
+      label: '⭐ VIP Dignitary (VC / Dignitary)',
+      driver: 'Hon. Vice Chancellor / State Dignitary',
+      dept: 'Executive Directorate',
+      category: 'VIP',
+      gate: 'Staff',
+      thumb: '/thumb_car.png'
+    },
     // Gate 1: Student Gate Presets
     {
       id: 'student_car',

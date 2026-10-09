@@ -19,7 +19,11 @@ import {
   dbApiCheckIn,
   dbApiCheckOut,
   dbApiSaveSettings,
-  dbApiResetDatabase
+  dbApiResetDatabase,
+  dbApiGetVipReservations,
+  dbApiCreateVipReservation,
+  dbApiReleaseVipReservation,
+  dbApiUpdateVipReservationStatus
 } from '../services/dbApi';
 
 const AppContext = createContext(null);
@@ -48,6 +52,30 @@ export function AppProvider({ children }) {
   const [registeredVehicles, setRegisteredVehicles] = useState(() => getCached('registeredVehicles', REGISTERED_DATABASE));
   const [notifications, setNotifications] = useState(() => getCached('notifications', INITIAL_NOTIFICATIONS));
   const [gateStats, setGateStats] = useState(() => getCached('gateStats', INITIAL_GATE_STATS));
+
+  // VIP & Emergency Reservations State
+  const [vipReservations, setVipReservations] = useState(() => getCached('vipReservations', [
+    {
+      id: 'RES-VIP-101',
+      slotId: 'F-01',
+      reservationType: 'VIP',
+      reservedFor: 'Hon. Vice Chancellor / State Dignitary',
+      vehicleNumber: 'KA-22-VIP-0001',
+      vehicleType: 'Four-Wheeler',
+      createdBy: 'Officer Raj Sharma (Security Supervisor)',
+      createdAt: new Date().toISOString(),
+      expectedArrival: '11:30 AM',
+      expiryTime: '06:00 PM',
+      reason: 'Annual Campus Convocation & Infrastructure Inspection',
+      status: 'Reserved',
+      releasedBy: null,
+      releasedAt: null,
+      notes: 'Fast-track security protocol. Priority Bay F-01.'
+    }
+  ]));
+
+  // Role-Based Authorization Context ('Security' | 'Admin' | 'Unauthorized')
+  const [userRole, setUserRole] = useState('Security');
   
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectItem, setInspectItem] = useState(null); // { type: 'slot' | 'vehicle', data: ... }
@@ -107,6 +135,10 @@ export function AppProvider({ children }) {
             setNotifications(fullState.notifications);
             setCached('notifications', fullState.notifications);
           }
+          if (Array.isArray(fullState.vipReservations) && fullState.vipReservations.length > 0) {
+            setVipReservations(fullState.vipReservations);
+            setCached('vipReservations', fullState.vipReservations);
+          }
           setIsDbConnected(true);
           setDbStatus(fullState.database);
           console.log('[CPVTS Database] Connected to SQLite database:', fullState.database);
@@ -156,22 +188,55 @@ export function AppProvider({ children }) {
     }
   });
 
-  // Dynamic Metrics
   // Dynamic Metrics (Database is the Authoritative Single Source of Truth)
   const metrics = useMemo(() => {
     const totalSlots = slots.length;
     const pending = slots.filter(s => s.status === 'Detection Pending' || s.isPending).length;
     const occupied = slots.filter(s => s.occupied && !s.isPending).length;
     const disabled = slots.filter(s => s.status === 'Disabled' || s.isDisabled).length;
-    const available = slots.filter(s => !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+
+    // ACTIVE VIP / EMERGENCY RESERVATIONS & RESERVED BAYS
+    const activeReservations = vipReservations.filter(r => r.status === 'Reserved' || r.status === 'Arrived / Checked In');
+    const reservedSlotIds = new Set(
+      vipReservations
+        .filter(r => r.status === 'Reserved' || r.status === 'Arrived / Checked In')
+        .map(r => r.slotId.toUpperCase())
+        .concat(slots.filter(s => s.isReserved || s.reservationStatus === 'Reserved').map(s => s.id.toUpperCase()))
+    );
+    const reservedSlots = reservedSlotIds.size;
+    const activeReservationsCount = activeReservations.length;
+    const expiredReservationsCount = vipReservations.filter(r => r.status === 'Expired').length;
+
+    // CRITICAL RULES 1, 2, 3: Reserved slots are strictly excluded from regular parking availability calculations!
+    const available = slots.filter(s =>
+      !s.occupied &&
+      !s.isPending &&
+      s.status !== 'Disabled' &&
+      !s.isDisabled &&
+      !reservedSlotIds.has(s.id.toUpperCase())
+    ).length;
 
     const twoWheelersTotal = slots.filter(s => s.zone === 'two-wheeler').length;
     const twoWheelersOccupied = slots.filter(s => s.zone === 'two-wheeler' && s.occupied).length;
-    const twoWheelersAvailable = slots.filter(s => s.zone === 'two-wheeler' && !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+    const twoWheelersAvailable = slots.filter(s =>
+      s.zone === 'two-wheeler' &&
+      !s.occupied &&
+      !s.isPending &&
+      s.status !== 'Disabled' &&
+      !s.isDisabled &&
+      !reservedSlotIds.has(s.id.toUpperCase())
+    ).length;
 
     const fourWheelersTotal = slots.filter(s => s.zone === 'four-wheeler').length;
     const fourWheelersOccupied = slots.filter(s => s.zone === 'four-wheeler' && s.occupied).length;
-    const fourWheelersAvailable = slots.filter(s => s.zone === 'four-wheeler' && !s.occupied && !s.isPending && s.status !== 'Disabled' && !s.isDisabled).length;
+    const fourWheelersAvailable = slots.filter(s =>
+      s.zone === 'four-wheeler' &&
+      !s.occupied &&
+      !s.isPending &&
+      s.status !== 'Disabled' &&
+      !s.isDisabled &&
+      !reservedSlotIds.has(s.id.toUpperCase())
+    ).length;
 
     const customZonesTotal = slots.filter(s => s.zone !== 'two-wheeler' && s.zone !== 'four-wheeler').length;
 
@@ -185,6 +250,9 @@ export function AppProvider({ children }) {
       available,
       pending,
       disabled,
+      reservedSlots,
+      activeReservationsCount,
+      expiredReservationsCount,
       freePercent: totalSlots > 0 ? Math.round((available / totalSlots) * 100) : 0,
       twoWheelersTotal,
       twoWheelersOccupied,
@@ -198,7 +266,7 @@ export function AppProvider({ children }) {
       todayExits: totalExitedCount,
       todayCollection: totalCollection
     };
-  }, [slots, activities]);
+  }, [slots, activities, vipReservations]);
 
   // Actions: Automatic Vehicle Check-In Workflow with 3-Gate Category Verification & Database Persistence
   const checkInVehicle = ({ vehicleNumber, type, category, driver, slotId, customEntryTime, gate }) => {
@@ -272,42 +340,54 @@ export function AppProvider({ children }) {
       };
     }
 
-    // Find Available Slot & Assign Slot (Never assign occupied or disabled slots; prioritize category match)
+    // Critical VIP Reservation Matching:
+    // Check if incoming vehicle matches an active reservation
+    const matchingReservation = vipReservations.find(
+      r => (r.status === 'Reserved' || r.status === 'Arrived / Checked In') &&
+      cleanPlate &&
+      r.vehicleNumber &&
+      r.vehicleNumber.toUpperCase() === cleanPlate
+    );
+
+    let isVipCheckIn = Boolean(matchingReservation);
     let targetSlot = slotId;
+
+    if (matchingReservation && !targetSlot) {
+      targetSlot = matchingReservation.slotId;
+    }
+
+    // Active reserved slot ID set (to exclude from regular vehicle assignment)
+    const reservedSlotIds = new Set(
+      vipReservations
+        .filter(r => r.status === 'Reserved')
+        .map(r => r.slotId.toUpperCase())
+        .concat(slots.filter(s => s.isReserved || s.reservationStatus === 'Reserved').map(s => s.id.toUpperCase()))
+    );
+
+    // Find Available Slot & Assign Slot (Never assign occupied, disabled, or reserved slots to regular vehicles!)
     if (!targetSlot) {
       const zoneType = resolvedType === 'Four-Wheeler' ? 'four-wheeler' : 'two-wheeler';
       
-      // 1. Try to find a slot matching vehicle zone, not occupied, not pending, not disabled, and matching gateCategory
-      let availableSlot = slots.find(s =>
-        s.zone === zoneType &&
-        !s.occupied &&
-        !s.isPending &&
-        s.status !== 'Disabled' &&
-        !s.isDisabled &&
-        s.gateCategory === resolvedCategory
-      );
+      const isSlotEligible = (s) => {
+        if (s.zone !== zoneType) return false;
+        if (s.occupied || s.isPending) return false;
+        if (s.status === 'Disabled' || s.isDisabled) return false;
+        // CRITICAL RULE 1 & 2: A reserved slot must never be automatically assigned to a regular vehicle!
+        if (s.isReserved || s.reservationStatus === 'Reserved' || reservedSlotIds.has(s.id.toUpperCase())) return false;
+        return true;
+      };
+
+      // 1. Try to find a slot matching vehicle zone, not occupied, not pending, not disabled, not reserved, matching gateCategory
+      let availableSlot = slots.find(s => isSlotEligible(s) && s.gateCategory === resolvedCategory);
 
       // 2. Fall back to Universal gate slots or unassigned category slots in that zone
       if (!availableSlot) {
-        availableSlot = slots.find(s =>
-          s.zone === zoneType &&
-          !s.occupied &&
-          !s.isPending &&
-          s.status !== 'Disabled' &&
-          !s.isDisabled &&
-          (!s.gateCategory || s.gateCategory === 'Universal')
-        );
+        availableSlot = slots.find(s => isSlotEligible(s) && (!s.gateCategory || s.gateCategory === 'Universal'));
       }
 
       // 3. Fall back to any available active slot in that zone
       if (!availableSlot) {
-        availableSlot = slots.find(s =>
-          s.zone === zoneType &&
-          !s.occupied &&
-          !s.isPending &&
-          s.status !== 'Disabled' &&
-          !s.isDisabled
-        );
+        availableSlot = slots.find(s => isSlotEligible(s));
       }
 
       if (!availableSlot) {
@@ -315,25 +395,50 @@ export function AppProvider({ children }) {
         return {
           success: false,
           error: 'Parking Full',
-          message: `Parking Full: All compatible ${resolvedType} bays in ${zoneType === 'four-wheeler' ? 'Zone F' : 'Zone T'} are occupied or under maintenance!`,
+          message: `Parking Full: All regular ${resolvedType} bays in ${zoneType === 'four-wheeler' ? 'Zone F' : 'Zone T'} are occupied or under maintenance (VIP reserved bays excluded)!`,
           zone: zoneType
         };
       }
       targetSlot = availableSlot.id;
+    } else {
+      // If a specific slot was targeted, enforce reservation integrity:
+      const targetSlotObj = slots.find(s => s.id.toUpperCase() === targetSlot.toUpperCase());
+      const isTargetReserved = targetSlotObj && (targetSlotObj.isReserved || targetSlotObj.reservationStatus === 'Reserved' || reservedSlotIds.has(targetSlot.toUpperCase()));
+
+      if (isTargetReserved && !isVipCheckIn) {
+        // Regular vehicle attempted on reserved slot without authorization
+        playSound('alert', soundEnabled);
+        return {
+          success: false,
+          error: 'Slot Reserved',
+          message: `Ingress Denied: Slot ${targetSlot} is reserved under Fast-Track VIP / Emergency Protocol. Regular vehicles cannot occupy this bay.`,
+          slot: targetSlot
+        };
+      }
     }
 
     const now = new Date();
     const timeStr = customEntryTime || now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
+    // If VIP check-in, update VIP reservation state to 'Arrived / Checked In'
+    if (isVipCheckIn && matchingReservation) {
+      setVipReservations(prev => {
+        const next = prev.map(r => r.id === matchingReservation.id ? { ...r, status: 'Arrived / Checked In' } : r);
+        setCached('vipReservations', next);
+        return next;
+      });
+    }
+
     // Step 8: Update Slots
     setSlots(prev => {
       const updated = prev.map(s => {
-        if (s.id === targetSlot) {
+        if (s.id.toUpperCase() === targetSlot.toUpperCase()) {
           return {
             ...s,
             occupied: true,
             isPending: false,
             status: 'Occupied',
+            reservationStatus: isVipCheckIn ? 'Arrived / Checked In' : s.reservationStatus,
             vehicleNumber: cleanPlate,
             type: resolvedType,
             driver: resolvedDriver,
@@ -546,15 +651,33 @@ export function AppProvider({ children }) {
 
     const resolvedPlate = vehicleNumber || targetSlot?.vehicleNumber || targetActivity?.vehicleNumber;
 
-    // Free slot -> Mark Available
+    // Free slot -> Mark Available and complete VIP reservation if fulfilled
+    setVipReservations(prev => {
+      const updated = prev.map(r => {
+        const isTargetMatch = (resolvedPlate && r.vehicleNumber && r.vehicleNumber.toUpperCase() === resolvedPlate.toUpperCase()) ||
+                              (resolvedSlotId && resolvedSlotId !== 'N/A' && r.slotId.toUpperCase() === resolvedSlotId.toUpperCase());
+        if (isTargetMatch && r.status === 'Arrived / Checked In') {
+          return { ...r, status: 'Completed' };
+        }
+        return r;
+      });
+      setCached('vipReservations', updated);
+      return updated;
+    });
+
     setSlots(prev => {
       const updated = prev.map(s => {
         if ((resolvedPlate && s.vehicleNumber === resolvedPlate) || (resolvedSlotId && resolvedSlotId !== 'N/A' && s.id === resolvedSlotId)) {
+          const wasVipCheckedIn = s.reservationStatus === 'Arrived / Checked In';
           return {
             ...s,
             occupied: false,
             isPending: false,
             status: 'Available',
+            isReserved: wasVipCheckedIn ? false : s.isReserved,
+            reservationId: wasVipCheckedIn ? null : s.reservationId,
+            reservationType: wasVipCheckedIn ? null : s.reservationType,
+            reservationStatus: wasVipCheckedIn ? null : s.reservationStatus,
             vehicleNumber: null,
             driver: null,
             category: null,
@@ -1034,6 +1157,239 @@ export function AppProvider({ children }) {
     return { success: false, error: res?.error || 'Failed to delete slot from database.' };
   };
 
+  // Fast-Track VIP & Emergency Reservation Management
+  const createVipReservation = async (reservationData) => {
+    if (userRole === 'Unauthorized') {
+      return { success: false, error: 'Unauthorized: Access restricted to Security Officers and Administrators.' };
+    }
+
+    try {
+      const res = await dbApiCreateVipReservation(reservationData, userRole);
+      if (res && res.success) {
+        const newRes = res.data;
+        // Update VIP reservations state
+        setVipReservations(prev => {
+          const next = [newRes, ...prev.filter(r => r.id !== newRes.id)];
+          setCached('vipReservations', next);
+          return next;
+        });
+
+        // Update corresponding slot state in memory
+        setSlots(prev => {
+          const next = prev.map(s => {
+            if (s.id.toUpperCase() === newRes.slotId.toUpperCase()) {
+              return {
+                ...s,
+                isReserved: true,
+                reservationId: newRes.id,
+                reservationType: newRes.reservationType,
+                reservationStatus: 'Reserved'
+              };
+            }
+            return s;
+          });
+          setCached('slots', next);
+          return next;
+        });
+
+        // Create notification
+        const newNotif = {
+          id: Date.now(),
+          type: 'alert',
+          title: `VIP Bay Reserved: ${newRes.slotId}`,
+          message: `${newRes.reservationType} Bay ${newRes.slotId} reserved for ${newRes.reservedFor} (${newRes.vehicleNumber}).`,
+          time: 'Just now',
+          read: false
+        };
+        setNotifications(prev => [newNotif, ...prev]);
+
+        // Audit Activity Log
+        const newActivity = {
+          id: Date.now(),
+          vehicleNumber: newRes.vehicleNumber,
+          type: newRes.vehicleType,
+          category: newRes.reservationType,
+          driver: newRes.reservedFor,
+          slot: newRes.slotId,
+          gate: 'Security Protocol',
+          entryTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          exitTime: null,
+          duration: null,
+          fee: 0,
+          status: 'VIP Reserved',
+          flagged: false,
+          receiptGenerated: false,
+          notes: `VIP Slot ${newRes.slotId} reserved by ${newRes.createdBy}. Reason: ${newRes.reason}`
+        };
+        setActivities(prev => [newActivity, ...prev]);
+
+        playSound('success', soundEnabled);
+        notifyDbSaved(`Slot ${newRes.slotId} locked for ${newRes.reservationType} (${newRes.reservedFor})`);
+        return { success: true, data: newRes };
+      }
+      return { success: false, error: res?.error || 'Failed to create VIP reservation.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const releaseVipReservation = async (reservationOrSlotId, reason = '') => {
+    if (userRole === 'Unauthorized') {
+      return { success: false, error: 'Unauthorized: Access restricted to Security Officers and Administrators.' };
+    }
+
+    try {
+      const officer = settings.officerName || 'Officer Raj Sharma';
+
+      // 1. Resolve target reservation: could be passed a reservation ID (RES-VIP-101) or a slot ID (F-01)
+      let targetReservation = vipReservations.find(r => r.id === reservationOrSlotId);
+      if (!targetReservation) {
+        targetReservation = vipReservations.find(
+          r => r.slotId?.toUpperCase() === String(reservationOrSlotId || '').toUpperCase() &&
+               (r.status === 'Reserved' || r.status === 'Arrived / Checked In')
+        );
+      }
+      const actualResId = targetReservation ? targetReservation.id : reservationOrSlotId;
+
+      // 2. Call backend release API with clean string arguments
+      const res = await dbApiReleaseVipReservation(actualResId, userRole, officer, reason);
+
+      if (res && res.success) {
+        // Unpack payload: backend sends { success: true, data: { reservation: {...}, slot: {...} } }
+        const payloadData = res.data || {};
+        const releasedRecord = payloadData.reservation || payloadData;
+        const updatedSlot = payloadData.slot;
+        const targetSlotId = updatedSlot?.id || releasedRecord.slotId || targetReservation?.slotId;
+
+        // 3. Update VIP reservations React state immediately
+        setVipReservations(prev => {
+          const next = prev.map(r => {
+            if (r.id === actualResId || (targetReservation && r.id === targetReservation.id)) {
+              return {
+                ...r,
+                ...(releasedRecord || {}),
+                status: 'Released',
+                releasedBy: officer,
+                releasedAt: new Date().toISOString()
+              };
+            }
+            return r;
+          });
+          setCached('vipReservations', next);
+          return next;
+        });
+
+        // 4. Update slot React state: CRITICAL RULE 5:
+        // "Releasing a reservation must never automatically mark an occupied slot as available"
+        setSlots(prev => {
+          const next = prev.map(s => {
+            if ((targetSlotId && s.id.toUpperCase() === targetSlotId.toUpperCase()) || s.reservationId === actualResId) {
+              const currentOccupied = updatedSlot ? updatedSlot.occupied : s.occupied;
+              const currentVehicle = updatedSlot ? updatedSlot.vehicleNumber : s.vehicleNumber;
+              const nextStatus = currentOccupied ? 'Occupied' : (s.isDisabled ? 'Disabled' : 'Available');
+
+              return {
+                ...s,
+                ...(updatedSlot || {}),
+                isReserved: false,
+                reservationId: null,
+                reservationType: null,
+                reservationStatus: null,
+                status: nextStatus
+              };
+            }
+            return s;
+          });
+          setCached('slots', next);
+          return next;
+        });
+
+        // 5. Authoritative resync in background
+        fetchFullDatabaseState().then(fullState => {
+          if (fullState && fullState.success) {
+            if (Array.isArray(fullState.vipReservations)) {
+              setVipReservations(fullState.vipReservations);
+              setCached('vipReservations', fullState.vipReservations);
+            }
+            if (Array.isArray(fullState.slots)) {
+              setSlots(fullState.slots);
+              setCached('slots', fullState.slots);
+            }
+          }
+        }).catch(err => console.warn('[CPVTS] Background sync notice:', err));
+
+        // 6. Security Activity log
+        const newActivity = {
+          id: Date.now(),
+          vehicleNumber: releasedRecord.vehicleNumber || targetReservation?.vehicleNumber || 'RESERVED',
+          type: releasedRecord.vehicleType || targetReservation?.vehicleType || 'Four-Wheeler',
+          category: releasedRecord.reservationType || targetReservation?.reservationType || 'VIP',
+          driver: releasedRecord.reservedFor || targetReservation?.reservedFor || 'Official Dignitary',
+          slot: targetSlotId || 'Priority Bay',
+          gate: 'Security Protocol',
+          entryTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          exitTime: null,
+          duration: null,
+          fee: 0,
+          status: 'VIP Released',
+          flagged: false,
+          receiptGenerated: false,
+          notes: `VIP Reservation ${actualResId} released by ${officer}. Reason: ${reason || 'Authorized manual release'}`
+        };
+        setActivities(prev => [newActivity, ...prev]);
+
+        playSound('beep', soundEnabled);
+        notifyDbSaved(`VIP Reservation ${actualResId} released.`);
+        return { success: true, data: releasedRecord, slot: updatedSlot };
+      }
+
+      return { success: false, error: res?.error || 'Failed to release reservation.' };
+    } catch (err) {
+      console.error('[CPVTS] Release error:', err);
+      return { success: false, error: err.message };
+    }
+  };
+
+  const updateVipReservationStatus = async (reservationId, status, notes = '') => {
+    if (userRole === 'Unauthorized') {
+      return { success: false, error: 'Unauthorized: Access restricted to Security Officers and Administrators.' };
+    }
+
+    try {
+      const res = await dbApiUpdateVipReservationStatus(reservationId, status, notes, userRole);
+      if (res && res.success) {
+        const updated = res.data;
+        setVipReservations(prev => {
+          const next = prev.map(r => r.id === reservationId ? { ...r, ...updated } : r);
+          setCached('vipReservations', next);
+          return next;
+        });
+
+        // Update slot reservation status if needed
+        setSlots(prev => {
+          const next = prev.map(s => {
+            if (s.reservationId === reservationId) {
+              return {
+                ...s,
+                reservationStatus: updated.status,
+                isReserved: updated.status === 'Reserved' || updated.status === 'Arrived / Checked In'
+              };
+            }
+            return s;
+          });
+          setCached('slots', next);
+          return next;
+        });
+
+        notifyDbSaved(`Reservation ${reservationId} status updated to ${status}.`);
+        return { success: true, data: updated };
+      }
+      return { success: false, error: res?.error || 'Failed to update reservation status.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
   return (
     <AppContext.Provider value={{
       currentTab,
@@ -1087,7 +1443,15 @@ export function AppProvider({ children }) {
       editParkingSlot,
       toggleParkingSlotStatus,
       deleteParkingSlot,
-      getNextSlotId: dbApiGetNextSlotId
+      getNextSlotId: dbApiGetNextSlotId,
+      // VIP & Emergency Reservations Additions
+      vipReservations,
+      setVipReservations,
+      userRole,
+      setUserRole,
+      createVipReservation,
+      releaseVipReservation,
+      updateVipReservationStatus
     }}>
       {children}
     </AppContext.Provider>

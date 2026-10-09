@@ -27,7 +27,8 @@ import {
   Sparkles,
   Info,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  Crown
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
@@ -46,7 +47,8 @@ export default function SettingsView() {
     editParkingSlot,
     toggleParkingSlotStatus,
     deleteParkingSlot,
-    getNextSlotId
+    getNextSlotId,
+    setCurrentTab
   } = useApp();
 
   // Top Tabs: 'tariffs' vs 'slots'
@@ -437,6 +439,41 @@ export default function SettingsView() {
             <Sliders size={16} />
             <span>Tariffs & System Rules</span>
           </button>
+
+          <button
+            onClick={() => setCurrentTab('vip-reservations')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid rgba(234, 179, 8, 0.4)',
+              background: 'rgba(234, 179, 8, 0.12)',
+              color: '#FACC15',
+              fontSize: '12.5px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.18s ease'
+            }}
+            className="hover-bright"
+            title="Jump to Fast-Track VIP & Emergency Reservation Portal"
+          >
+            <Crown size={15} color="#EAB308" />
+            <span>VIP Reservations</span>
+            {metrics.reservedSlots > 0 && (
+              <span style={{
+                fontSize: '10px',
+                fontFamily: 'var(--font-mono)',
+                padding: '1px 6px',
+                borderRadius: '10px',
+                background: 'rgba(234, 179, 8, 0.3)',
+                color: '#FFFFFF'
+              }}>
+                {metrics.reservedSlots} Locked
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -775,6 +812,18 @@ export default function SettingsView() {
                         }}>
                           <Power size={11} />
                           DISABLED (MAINTENANCE)
+                        </span>
+                      );
+                    } else if (slot.isReserved || slot.reservationStatus === 'Reserved' || slot.reservationStatus === 'Arrived / Checked In') {
+                      statusBadge = (
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                          background: 'rgba(234, 179, 8, 0.18)', color: '#FACC15',
+                          border: '1px solid rgba(234, 179, 8, 0.5)', borderRadius: '6px',
+                          padding: '3px 8px', fontSize: '10.5px', fontWeight: 800, fontFamily: 'var(--font-mono)'
+                        }}>
+                          <Crown size={11} color="#EAB308" />
+                          VIP LOCKED
                         </span>
                       );
                     }

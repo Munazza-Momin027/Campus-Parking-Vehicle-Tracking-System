@@ -16,6 +16,7 @@ import ReportsView from './views/ReportsView';
 import RegisteredVehiclesView from './views/RegisteredVehiclesView';
 import CameraSettingsView from './views/CameraSettingsView';
 import SettingsView from './views/SettingsView';
+import VipReservationsView from './views/VipReservationsView';
 
 export default function App() {
   const { currentTab } = useApp();
@@ -32,6 +33,8 @@ export default function App() {
         return <CheckOutView />;
       case 'slots':
         return <SlotsView />;
+      case 'vip-reservations':
+        return <VipReservationsView />;
       case 'finder':
         return <VehicleFinderView />;
       case 'summary':

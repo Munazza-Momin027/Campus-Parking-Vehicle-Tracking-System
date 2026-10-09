@@ -15,7 +15,8 @@ import {
   Volume2,
   VolumeX,
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Crown
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -27,6 +28,7 @@ export default function Sidebar() {
     { id: 'checkin', label: 'Vehicle Check-In', icon: LogIn },
     { id: 'checkout', label: 'Vehicle Check-Out', icon: LogOut },
     { id: 'slots', label: 'Parking Slots', icon: ParkingSquare, badge: `${metrics.occupied}/${metrics.totalSlots || 15}` },
+    { id: 'vip-reservations', label: 'Reserve VIP Slot', icon: Crown, badge: metrics.reservedSlots > 0 ? `${metrics.reservedSlots} VIP` : null },
     { id: 'finder', label: 'Vehicle Finder', icon: Search },
     { id: 'summary', label: 'Daily Summary', icon: BarChart3 },
     { id: 'reports', label: 'Reports', icon: FileText },

@@ -83,6 +83,10 @@ function initSchema(db) {
       location TEXT,
       sensorType TEXT DEFAULT 'System-Managed',
       isDisabled INTEGER DEFAULT 0,
+      isReserved INTEGER DEFAULT 0,
+      reservationId TEXT,
+      reservationType TEXT,
+      reservationStatus TEXT,
       createdAt TEXT,
       updatedAt TEXT
     );
@@ -97,10 +101,39 @@ function initSchema(db) {
     if (!cols.includes('location')) db.exec("ALTER TABLE parking_slots ADD COLUMN location TEXT;");
     if (!cols.includes('sensorType')) db.exec("ALTER TABLE parking_slots ADD COLUMN sensorType TEXT DEFAULT 'System-Managed';");
     if (!cols.includes('isDisabled')) db.exec("ALTER TABLE parking_slots ADD COLUMN isDisabled INTEGER DEFAULT 0;");
+    if (!cols.includes('isReserved')) db.exec("ALTER TABLE parking_slots ADD COLUMN isReserved INTEGER DEFAULT 0;");
+    if (!cols.includes('reservationId')) db.exec("ALTER TABLE parking_slots ADD COLUMN reservationId TEXT;");
+    if (!cols.includes('reservationType')) db.exec("ALTER TABLE parking_slots ADD COLUMN reservationType TEXT;");
+    if (!cols.includes('reservationStatus')) db.exec("ALTER TABLE parking_slots ADD COLUMN reservationStatus TEXT;");
     if (!cols.includes('createdAt')) db.exec("ALTER TABLE parking_slots ADD COLUMN createdAt TEXT;");
   } catch (migErr) {
     console.warn('[DB Migration Warning]:', migErr.message);
   }
+
+  // 2b. VIP & Emergency Reservations
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vip_reservations (
+      id TEXT PRIMARY KEY,
+      slotId TEXT NOT NULL,
+      reservationType TEXT NOT NULL,
+      reservedFor TEXT,
+      vehicleNumber TEXT COLLATE NOCASE,
+      vehicleType TEXT NOT NULL,
+      createdBy TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      expectedArrival TEXT,
+      expiryTime TEXT,
+      reason TEXT NOT NULL,
+      status TEXT DEFAULT 'Reserved',
+      releasedBy TEXT,
+      releasedAt TEXT,
+      notes TEXT,
+      FOREIGN KEY (slotId) REFERENCES parking_slots(id) ON UPDATE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_vip_slot ON vip_reservations(slotId);
+    CREATE INDEX IF NOT EXISTS idx_vip_status ON vip_reservations(status);
+    CREATE INDEX IF NOT EXISTS idx_vip_plate ON vip_reservations(vehicleNumber);
+  `);
 
   // 3. Activity History
   db.exec(`
@@ -202,7 +235,41 @@ function initSchema(db) {
   const countRow = db.prepare('SELECT count(*) as count FROM registered_vehicles').get();
   if (countRow.count === 0) {
     seedInitialData(db);
+  } else {
+    // If vip_reservations table is empty on existing database, seed demo VIP reservation
+    try {
+      const vipResCount = db.prepare('SELECT count(*) as count FROM vip_reservations').get();
+      if (vipResCount.count === 0) {
+        seedInitialVipReservations(db);
+      }
+    } catch (e) {
+      console.warn('[DB VIP Seed Warning]:', e.message);
+    }
   }
+}
+
+function seedInitialVipReservations(db) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR REPLACE INTO vip_reservations
+    (id, slotId, reservationType, reservedFor, vehicleNumber, vehicleType, createdBy, createdAt, expectedArrival, expiryTime, reason, status, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reserved', ?)
+  `).run(
+    'RES-VIP-101', 'F-01', 'VIP', 'Hon. Vice Chancellor / State Dignitary', 'KA-22-VIP-0001', 'Four-Wheeler',
+    'Officer Raj Sharma (Security Supervisor)', now, '11:30 AM', '06:00 PM',
+    'Annual Campus Convocation & Infrastructure Inspection',
+    'Fast-track security protocol. Priority Bay F-01.'
+  );
+
+  db.prepare(`
+    UPDATE parking_slots SET
+      isReserved = 1,
+      reservationId = 'RES-VIP-101',
+      reservationType = 'VIP',
+      reservationStatus = 'Reserved',
+      updatedAt = ?
+    WHERE id = 'F-01'
+  `).run(now);
 }
 
 /**
@@ -343,7 +410,7 @@ export function seedInitialData(db) {
     { id: 'T-09', zone: 'two-wheeler', type: 'Two-Wheeler', occupied: 0, isPending: 0, status: 'Available', vehicleNumber: null, driver: null, category: null, entryTime: null, gate: null },
     { id: 'T-10', zone: 'two-wheeler', type: 'Two-Wheeler', occupied: 0, isPending: 0, status: 'Available', vehicleNumber: null, driver: null, category: null, entryTime: null, gate: null },
 
-    { id: 'F-01', zone: 'four-wheeler', type: 'Four-Wheeler', occupied: 0, isPending: 0, status: 'Available', vehicleNumber: null, driver: null, category: null, entryTime: null, gate: null },
+    { id: 'F-01', zone: 'four-wheeler', type: 'Four-Wheeler', occupied: 0, isPending: 0, status: 'Available', vehicleNumber: null, driver: null, category: null, entryTime: null, gate: null, isReserved: 1, reservationId: 'RES-VIP-101', reservationType: 'VIP', reservationStatus: 'Reserved' },
     { id: 'F-02', zone: 'four-wheeler', type: 'Four-Wheeler', occupied: 1, isPending: 0, status: 'Occupied', vehicleNumber: 'KA-22-XY-9876', driver: 'Rahul Verma (Student)', category: 'Student', entryTime: '10:24 AM', gate: 'Student Gate' },
     { id: 'F-03', zone: 'four-wheeler', type: 'Four-Wheeler', occupied: 0, isPending: 1, status: 'Detection Pending', vehicleNumber: 'KA-22-ZZ-4400', driver: 'Campus Guest / Visitor', category: 'Visitor', entryTime: '10:28 AM', gate: 'Visitor Gate' },
     { id: 'F-04', zone: 'four-wheeler', type: 'Four-Wheeler', occupied: 0, isPending: 0, status: 'Available', vehicleNumber: null, driver: null, category: null, entryTime: null, gate: null },
@@ -352,12 +419,12 @@ export function seedInitialData(db) {
 
   const insertSlot = db.prepare(`
     INSERT OR REPLACE INTO parking_slots
-    (id, zone, type, occupied, isPending, status, vehicleNumber, driver, category, entryTime, gate, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, zone, type, occupied, isPending, status, vehicleNumber, driver, category, entryTime, gate, isReserved, reservationId, reservationType, reservationStatus, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const s of defaultSlots) {
-    insertSlot.run(s.id, s.zone, s.type, s.occupied, s.isPending, s.status, s.vehicleNumber, s.driver, s.category, s.entryTime, s.gate, now);
+    insertSlot.run(s.id, s.zone, s.type, s.occupied, s.isPending, s.status, s.vehicleNumber, s.driver, s.category, s.entryTime, s.gate, s.isReserved ? 1 : 0, s.reservationId || null, s.reservationType || null, s.reservationStatus || null, now);
   }
 
   // 3. Seed Activities
@@ -785,6 +852,41 @@ export function seedInitialData(db) {
   for (const n of defaultNotifications) {
     insertNotif.run(n.id, n.title, n.message, n.time, n.type, n.read, now);
   }
+
+  // 8. Seed VIP / Emergency Reservations
+  const defaultReservations = [
+    {
+      id: 'RES-VIP-101',
+      slotId: 'F-01',
+      reservationType: 'VIP',
+      reservedFor: 'Hon. Vice Chancellor / State Dignitary',
+      vehicleNumber: 'KA-22-VIP-0001',
+      vehicleType: 'Four-Wheeler',
+      createdBy: 'Officer Raj Sharma (Security Supervisor)',
+      createdAt: now,
+      expectedArrival: '11:30 AM',
+      expiryTime: '06:00 PM',
+      reason: 'Annual Campus Convocation & Infrastructure Inspection',
+      status: 'Reserved',
+      releasedBy: null,
+      releasedAt: null,
+      notes: 'Fast-track security protocol. Priority Bay F-01.'
+    }
+  ];
+
+  const insertRes = db.prepare(`
+    INSERT OR REPLACE INTO vip_reservations
+    (id, slotId, reservationType, reservedFor, vehicleNumber, vehicleType, createdBy, createdAt, expectedArrival, expiryTime, reason, status, releasedBy, releasedAt, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const r of defaultReservations) {
+    insertRes.run(
+      r.id, r.slotId, r.reservationType, r.reservedFor, r.vehicleNumber, r.vehicleType,
+      r.createdBy, r.createdAt, r.expectedArrival, r.expiryTime, r.reason, r.status,
+      r.releasedBy, r.releasedAt, r.notes
+    );
+  }
 }
 
 // =========================================================================
@@ -883,6 +985,10 @@ export function dbGetSlots() {
     occupied: Boolean(r.occupied),
     isPending: Boolean(r.isPending),
     isDisabled: Boolean(r.isDisabled || r.status === 'Disabled'),
+    isReserved: Boolean(r.isReserved || r.reservationStatus === 'Reserved'),
+    reservationId: r.reservationId || null,
+    reservationType: r.reservationType || null,
+    reservationStatus: r.reservationStatus || (r.isReserved ? 'Reserved' : null),
     gateCategory: r.gateCategory || 'Universal',
     floor: r.floor || (r.zone === 'four-wheeler' ? 'Ground Level Bay' : 'East Wing Bay'),
     row: r.row || '',
@@ -1338,15 +1444,104 @@ export function dbCheckInTransaction({ vehicleNumber, type, category, driver, sl
   const db = getDatabase();
   const cleanPlate = vehicleNumber.trim().toUpperCase();
   const now = new Date().toISOString();
+  const effectiveType = type || 'Four-Wheeler';
+  const effectiveCategory = category || 'Visitor';
+  const effectiveDriver = driver || 'Driver';
+  const effectiveTimeStr = timeStr || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  const effectiveGate = gate || 'Gate 1 (Main Entrance)';
+  const effectiveDept = department || 'General';
+
+  // If slotId is not provided, auto-allocate an eligible slot strictly skipping reserved bays
+  if (!slotId) {
+    const zoneType = (effectiveType === 'Four-Wheeler') ? 'four-wheeler' : 'two-wheeler';
+    const candidate = db.prepare(`
+      SELECT id FROM parking_slots 
+      WHERE zone = ? 
+        AND occupied = 0 
+        AND (isPending = 0 OR isPending IS NULL)
+        AND vehicleNumber IS NULL
+        AND isDisabled = 0 
+        AND status = 'Available'
+        AND (isReserved = 0 OR isReserved IS NULL)
+        AND id NOT IN (SELECT slotId FROM vip_reservations WHERE status IN ('Reserved', 'Arrived / Checked In'))
+      ORDER BY id ASC
+      LIMIT 1
+    `).get(zoneType);
+
+    if (!candidate) {
+      throw new Error(`Parking Full: No available regular ${effectiveType} bays in database.`);
+    }
+    slotId = candidate.id;
+  }
+
+  // Validate slot existence & reservation status
+  const targetSlot = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(slotId);
+  if (!targetSlot) {
+    throw new Error(`Parking slot '${slotId}' does not exist.`);
+  }
+
+  // 1. Check if slot is occupied or pending
+  if (targetSlot.occupied === 1 || targetSlot.vehicleNumber || targetSlot.isPending === 1) {
+    throw new Error(`Integrity Denial: Slot '${slotId}' is already occupied or pending arrival (${targetSlot.vehicleNumber || 'Pending'}).`);
+  }
+
+  // 2. Check if slot is disabled
+  if (targetSlot.isDisabled === 1 || targetSlot.status === 'Disabled') {
+    throw new Error(`Slot '${slotId}' is disabled / under maintenance and cannot be assigned.`);
+  }
+
+  // 3. Check if slot has active reservation
+  const activeRes = db.prepare(`
+    SELECT * FROM vip_reservations 
+    WHERE upper(slotId) = ? AND status IN ('Reserved', 'Arrived / Checked In')
+  `).get(slotId.toUpperCase());
+
+  const isSlotReserved = targetSlot.isReserved === 1 || targetSlot.reservationStatus === 'Reserved' || Boolean(activeRes);
+
+  let isVipArrival = false;
+  if (isSlotReserved) {
+    if (activeRes && activeRes.status === 'Arrived / Checked In') {
+      throw new Error(`Slot '${slotId}' is already occupied by VIP vehicle (${activeRes.vehicleNumber || 'Authorized Dignitary'}).`);
+    }
+
+    const expectedPlate = (activeRes?.vehicleNumber || '').trim().toUpperCase();
+    const isCategoryVip = effectiveCategory === 'VIP' || effectiveCategory === 'Emergency' || effectiveCategory === 'Official Guest';
+
+    if (expectedPlate && expectedPlate === cleanPlate) {
+      isVipArrival = true;
+    } else if (!expectedPlate && (isCategoryVip || effectiveDept?.includes('VIP') || effectiveDriver?.includes('Dignitary') || effectiveDriver?.includes('Official'))) {
+      isVipArrival = true;
+    } else if (isCategoryVip) {
+      isVipArrival = true;
+    } else {
+      // RULE 1 & 2: A reserved slot must never be automatically assigned to a regular vehicle.
+      const resType = activeRes?.reservationType || targetSlot.reservationType || 'VIP / Emergency';
+      const resFor = activeRes?.reservedFor || activeRes?.vehicleNumber || 'Authorized Dignitary';
+      throw new Error(`Integrity Denial: Slot '${slotId}' is reserved for ${resType} (${resFor}). Regular vehicles are prohibited from occupying this bay.`);
+    }
+  }
 
   // 1. Update target slot
+  const nextResStatus = isVipArrival ? 'Arrived / Checked In' : targetSlot.reservationStatus;
   db.prepare(`
     UPDATE parking_slots SET
       occupied = 1, isPending = 0, status = 'Occupied',
       vehicleNumber = ?, type = ?, driver = ?, category = ?,
-      entryTime = ?, gate = ?, updatedAt = ?
+      entryTime = ?, gate = ?,
+      reservationStatus = ?,
+      updatedAt = ?
     WHERE id = ?
-  `).run(cleanPlate, type, driver, category, timeStr, gate, now, slotId);
+  `).run(cleanPlate, effectiveType, effectiveDriver, effectiveCategory, effectiveTimeStr, effectiveGate, nextResStatus, now, slotId);
+
+  // If VIP arrival, update the reservation record
+  if (isVipArrival && activeRes) {
+    db.prepare(`
+      UPDATE vip_reservations SET
+        status = 'Arrived / Checked In',
+        vehicleNumber = coalesce(vehicleNumber, ?)
+      WHERE id = ?
+    `).run(cleanPlate, activeRes.id);
+  }
 
   // 2. Create activity record
   const actId = String(Date.now());
@@ -1357,31 +1552,31 @@ export function dbCheckInTransaction({ vehicleNumber, type, category, driver, sl
   `).run(
     actId,
     cleanPlate,
-    type,
-    category,
+    effectiveType,
+    effectiveCategory,
     slotId,
-    gate,
-    timeStr,
+    effectiveGate,
+    effectiveTimeStr,
     '—',
     'Parked',
-    driver,
-    department || '',
+    effectiveDriver,
+    effectiveDept || (isVipArrival ? `VIP Ingress: ${activeRes?.reservationType}` : ''),
     'Just Now',
     0,
-    type === 'Four-Wheeler' ? '/camera_1_feed.png' : '/camera_2_feed.png',
-    type === 'Four-Wheeler' ? '/thumb_car.png' : '/thumb_bike.png',
+    effectiveType === 'Four-Wheeler' ? '/camera_1_feed.png' : '/camera_2_feed.png',
+    effectiveType === 'Four-Wheeler' ? '/thumb_car.png' : '/thumb_bike.png',
     now
   );
 
   // 3. Increment gate stats
-  const gateRow = db.prepare('SELECT * FROM gate_stats WHERE category = ?').get(category);
+  const gateRow = db.prepare('SELECT * FROM gate_stats WHERE category = ?').get(effectiveCategory);
   if (gateRow) {
     const recentDetectionJson = JSON.stringify({
       vehicleNumber: cleanPlate,
-      vehicleType: type,
-      category,
+      vehicleType: effectiveType,
+      category: effectiveCategory,
       direction: 'Entry',
-      time: timeStr,
+      time: effectiveTimeStr,
       slot: slotId,
       verified: true
     });
@@ -1391,7 +1586,7 @@ export function dbCheckInTransaction({ vehicleNumber, type, category, driver, sl
         currentCount = currentCount + 1,
         recentDetectionJson = ?
       WHERE category = ?
-    `).run(recentDetectionJson, category);
+    `).run(recentDetectionJson, effectiveCategory);
   }
 
   // 4. Add notification
@@ -1401,15 +1596,18 @@ export function dbCheckInTransaction({ vehicleNumber, type, category, driver, sl
     VALUES (?, ?, ?, ?, ?, 0, ?)
   `).run(
     notifId,
-    'Auto Check-In Verified',
-    `${cleanPlate} (${category}) checked in via ${gate}. Slot ${slotId} assigned.`,
-    timeStr,
+    isVipArrival ? 'VIP Vehicle Check-In Verified' : 'Auto Check-In Verified',
+    isVipArrival
+      ? `${cleanPlate} checked in to reserved slot ${slotId} (${activeRes.reservationType}). Gate barrier OPENED.`
+      : `${cleanPlate} (${effectiveCategory}) checked in via ${effectiveGate}. Slot ${slotId} assigned.`,
+    effectiveTimeStr,
     'success',
     now
   );
 
   return {
     success: true,
+    slotAssigned: slotId,
     slot: db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(slotId),
     activity: db.prepare('SELECT * FROM activities WHERE id = ?').get(actId)
   };
@@ -1424,23 +1622,48 @@ export function dbCheckOutTransaction({ vehicleNumber, slotId, fee, duration, ti
   const now = new Date().toISOString();
 
   // 1. Release slot
-  if (slotId) {
+  const targetSlot = slotId
+    ? db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(slotId)
+    : (cleanPlate ? db.prepare('SELECT * FROM parking_slots WHERE vehicleNumber = ?').get(cleanPlate) : null);
+
+  if (targetSlot) {
+    const isVipCheckedIn = targetSlot.reservationStatus === 'Arrived / Checked In';
+
+    // If it was VIP reservation checked in, transition reservation to Completed
+    if (isVipCheckedIn && targetSlot.reservationId) {
+      db.prepare(`
+        UPDATE vip_reservations SET status = 'Completed' WHERE id = ?
+      `).run(targetSlot.reservationId);
+    } else if (isVipCheckedIn) {
+      db.prepare(`
+        UPDATE vip_reservations SET status = 'Completed' WHERE upper(slotId) = ? AND status = 'Arrived / Checked In'
+      `).run(targetSlot.id.toUpperCase());
+    }
+
     db.prepare(`
       UPDATE parking_slots SET
         occupied = 0, isPending = 0, status = 'Available',
         vehicleNumber = NULL, driver = NULL, category = NULL,
-        entryTime = NULL, gate = NULL, updatedAt = ?
+        entryTime = NULL, gate = NULL,
+        isReserved = 0, reservationId = NULL, reservationType = NULL, reservationStatus = NULL,
+        updatedAt = ?
       WHERE id = ?
-    `).run(now, slotId);
+    `).run(now, targetSlot.id);
   } else if (cleanPlate) {
     db.prepare(`
       UPDATE parking_slots SET
         occupied = 0, isPending = 0, status = 'Available',
         vehicleNumber = NULL, driver = NULL, category = NULL,
-        entryTime = NULL, gate = NULL, updatedAt = ?
+        entryTime = NULL, gate = NULL,
+        isReserved = 0, reservationId = NULL, reservationType = NULL, reservationStatus = NULL,
+        updatedAt = ?
       WHERE vehicleNumber = ?
     `).run(now, cleanPlate);
   }
+
+  const effectiveTimeStr = timeStr || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  const effectiveDuration = duration || '1 hr 15 mins';
+  const effectiveFee = fee !== undefined && fee !== null ? Number(fee) : 0;
 
   // 2. Update parking activity to 'Exited'
   const activeAct = db.prepare(`
@@ -1454,7 +1677,7 @@ export function dbCheckOutTransaction({ vehicleNumber, slotId, fee, duration, ti
       UPDATE activities SET
         status = 'Exited', exitTime = ?, duration = ?, fee = ?
       WHERE id = ?
-    `).run(timeStr, duration, fee, activeAct.id);
+    `).run(effectiveTimeStr, effectiveDuration, effectiveFee, activeAct.id);
   }
 
   // 3. Update gate stats
@@ -1466,7 +1689,7 @@ export function dbCheckOutTransaction({ vehicleNumber, slotId, fee, duration, ti
       vehicleType: type || (activeAct ? activeAct.type : 'Four-Wheeler'),
       category: resolvedCategory,
       direction: 'Exit',
-      time: timeStr,
+      time: effectiveTimeStr,
       slot: slotId || (activeAct ? activeAct.slot : 'Released'),
       verified: true
     });
@@ -1487,8 +1710,8 @@ export function dbCheckOutTransaction({ vehicleNumber, slotId, fee, duration, ti
   `).run(
     notifId,
     'Auto Check-Out Completed',
-    `${cleanPlate} checked out via ${gate || 'Egress Gate'}. Slot released. Fee: ₹${fee}.`,
-    timeStr,
+    `${cleanPlate} checked out via ${gate || 'Egress Gate'}. Slot released. Fee: ₹${effectiveFee}.`,
+    effectiveTimeStr,
     'info',
     now
   );
@@ -1576,6 +1799,359 @@ export function dbSearchVehicles(query) {
   return results;
 }
 
+// =========================================================================
+// VIP & EMERGENCY RESERVATIONS OPERATIONS
+// =========================================================================
+
+export function dbGetVipReservations(filters = {}) {
+  const db = getDatabase();
+  let query = 'SELECT * FROM vip_reservations';
+  const params = [];
+  const whereClauses = [];
+
+  if (filters.status && filters.status !== 'all') {
+    whereClauses.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.slotId) {
+    whereClauses.push('upper(slotId) = ?');
+    params.push(filters.slotId.toUpperCase());
+  }
+  if (filters.reservationType && filters.reservationType !== 'all') {
+    whereClauses.push('reservationType = ?');
+    params.push(filters.reservationType);
+  }
+  if (filters.vehicleNumber) {
+    whereClauses.push('upper(vehicleNumber) = ?');
+    params.push(filters.vehicleNumber.toUpperCase());
+  }
+
+  if (whereClauses.length > 0) {
+    query += ' WHERE ' + whereClauses.join(' AND ');
+  }
+
+  query += ' ORDER BY createdAt DESC';
+
+  const rows = db.prepare(query).all(...params);
+  return rows.map(r => ({
+    ...r,
+    notes: r.notes || ''
+  }));
+}
+
+export function dbGetVipReservationById(id) {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(id) || null;
+}
+
+export function dbGetActiveReservationBySlotId(slotId) {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT * FROM vip_reservations 
+    WHERE upper(slotId) = ? AND status IN ('Reserved', 'Arrived / Checked In')
+    ORDER BY createdAt DESC LIMIT 1
+  `).get(slotId.toUpperCase()) || null;
+}
+
+export function dbGetActiveReservationByVehicle(vehicleNumber) {
+  const db = getDatabase();
+  const cleanPlate = (vehicleNumber || '').trim().toUpperCase();
+  if (!cleanPlate) return null;
+  return db.prepare(`
+    SELECT * FROM vip_reservations 
+    WHERE upper(vehicleNumber) = ? AND status = 'Reserved'
+    ORDER BY createdAt DESC LIMIT 1
+  `).get(cleanPlate) || null;
+}
+
+export function dbCreateVipReservation(data, userRole = 'Security', userName = 'Officer Raj Sharma') {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+
+  // 1. Role-based Server Authorization Check
+  const normalizedRole = String(userRole || '').trim().toLowerCase();
+  if (normalizedRole !== 'security' && normalizedRole !== 'admin') {
+    throw new Error('Forbidden: Only authorized Security or Admin personnel are permitted to create VIP / Emergency reservations.');
+  }
+
+  if (!data || !data.slotId) {
+    throw new Error('Parking Slot ID is required.');
+  }
+
+  const slotId = String(data.slotId).trim().toUpperCase();
+
+  // 2. Validate Slot Existence
+  const slot = db.prepare('SELECT * FROM parking_slots WHERE upper(id) = ?').get(slotId);
+  if (!slot) {
+    throw new Error(`Parking slot '${slotId}' does not exist in inventory.`);
+  }
+
+  // 3. Rule 7: Do not allow reservation of an occupied or disabled slot
+  if (slot.occupied === 1 || slot.vehicleNumber) {
+    throw new Error(`Slot '${slotId}' cannot be reserved because it is currently occupied by vehicle ${slot.vehicleNumber}.`);
+  }
+  if (slot.isDisabled === 1 || slot.status === 'Disabled') {
+    throw new Error(`Slot '${slotId}' cannot be reserved because it is currently disabled/under maintenance.`);
+  }
+
+  // 4. Rule 6: A reserved slot cannot be reserved twice (Prevent double reservation)
+  const existingRes = db.prepare(`
+    SELECT * FROM vip_reservations 
+    WHERE upper(slotId) = ? AND status IN ('Reserved', 'Arrived / Checked In')
+  `).get(slotId);
+  if (existingRes || slot.isReserved === 1 || slot.reservationStatus === 'Reserved') {
+    throw new Error(`Slot '${slotId}' is already reserved under active reservation ${existingRes ? existingRes.id : 'record'}.`);
+  }
+
+  // 5. Validate Reason (Required)
+  if (!data.reason || !String(data.reason).trim()) {
+    throw new Error('Reason for reservation is mandatory and cannot be empty.');
+  }
+
+  // 6. Reservation Type Validation
+  const validTypes = ['VIP', 'Official Guest', 'Emergency'];
+  const resType = validTypes.includes(data.reservationType) ? data.reservationType : 'VIP';
+
+  // 7. Vehicle Type Matching Slot
+  const slotType = slot.type;
+  const vehicleType = data.vehicleType || slotType;
+  if (vehicleType !== slotType) {
+    throw new Error(`Vehicle type mismatch: Slot '${slotId}' is designated for ${slotType}, but reservation specified ${vehicleType}.`);
+  }
+
+  const cleanPlate = data.vehicleNumber ? data.vehicleNumber.trim().toUpperCase() : null;
+  const resId = data.id || `RES-${resType.substring(0, 3).toUpperCase()}-${Date.now().toString().slice(-5)}`;
+  const reservedFor = data.reservedFor ? String(data.reservedFor).trim() : null;
+  const expectedArrival = data.expectedArrival || null;
+  const expiryTime = data.expiryTime || null;
+  const reason = String(data.reason).trim();
+  const createdBy = userName || 'Officer Raj Sharma';
+  const notes = data.notes || '';
+
+  // Atomic SQLite Operations
+  db.prepare(`
+    INSERT INTO vip_reservations
+    (id, slotId, reservationType, reservedFor, vehicleNumber, vehicleType, createdBy, createdAt, expectedArrival, expiryTime, reason, status, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Reserved', ?)
+  `).run(
+    resId, slotId, resType, reservedFor, cleanPlate, vehicleType,
+    createdBy, now, expectedArrival, expiryTime, reason, notes
+  );
+
+  // Update Slot reservation status (keeps physical occupancy status separate!)
+  db.prepare(`
+    UPDATE parking_slots SET
+      isReserved = 1,
+      reservationId = ?,
+      reservationType = ?,
+      reservationStatus = 'Reserved',
+      updatedAt = ?
+    WHERE id = ?
+  `).run(resId, resType, now, slot.id);
+
+  // Audit activity log
+  const actId = `ACT-RES-${Date.now().toString().slice(-6)}`;
+  db.prepare(`
+    INSERT INTO activities
+    (id, vehicleNumber, type, category, slot, gate, entryTime, exitTime, status, driver, department, duration, fee, photo, thumb, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?)
+  `).run(
+    actId,
+    cleanPlate || 'RESERVED',
+    vehicleType,
+    resType,
+    slotId,
+    'Security Command',
+    now.slice(11, 16),
+    '—',
+    'Reserved',
+    reservedFor || `${resType} Pass`,
+    `Reservation: ${reason}`,
+    'Pre-Allocated',
+    now
+  );
+
+  // Security notification
+  const notifId = `notif-${Date.now()}`;
+  db.prepare(`
+    INSERT INTO notifications (id, title, message, time, type, read, createdAt)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(
+    notifId,
+    `${resType} Slot Reserved`,
+    `Slot ${slotId} successfully reserved for ${reservedFor || cleanPlate || 'Dignitary'} by ${createdBy}.`,
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
+    'success',
+    now
+  );
+
+  return db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(resId);
+}
+
+export function dbReleaseVipReservation(id, userRole = 'Security', userName = 'Officer Raj Sharma', releaseNotes = '') {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+
+  // 1. Role-based Server Authorization Check
+  const normalizedRole = String(userRole || '').trim().toLowerCase();
+  if (normalizedRole !== 'security' && normalizedRole !== 'admin') {
+    throw new Error('Forbidden: Only authorized Security or Admin personnel are permitted to release VIP / Emergency reservations.');
+  }
+
+  const res = db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(id);
+  if (!res) {
+    throw new Error(`Reservation '${id}' was not found.`);
+  }
+
+  if (res.status === 'Released') {
+    const existingSlot = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(res.slotId);
+    return {
+      success: true,
+      alreadyReleased: true,
+      reservation: res,
+      slot: existingSlot || null
+    };
+  }
+
+  const slot = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(res.slotId);
+
+  // Update reservation record
+  db.prepare(`
+    UPDATE vip_reservations SET
+      status = 'Released',
+      releasedBy = ?,
+      releasedAt = ?,
+      notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
+    WHERE id = ?
+  `).run(userName, now, releaseNotes || 'Manual Security Release', releaseNotes || 'Manual Security Release', id);
+
+  // Update slot:
+  // CRITICAL RULE 5: "Releasing a reservation must not automatically mark an occupied slot as available."
+  if (slot) {
+    const isOccupied = slot.occupied === 1 || Boolean(slot.vehicleNumber);
+    const nextStatus = isOccupied ? 'Occupied' : (slot.isDisabled ? 'Disabled' : 'Available');
+
+    db.prepare(`
+      UPDATE parking_slots SET
+        isReserved = 0,
+        reservationId = NULL,
+        reservationType = NULL,
+        reservationStatus = NULL,
+        status = ?,
+        updatedAt = ?
+      WHERE id = ?
+    `).run(nextStatus, now, slot.id);
+  }
+
+  // Audit activity log
+  const actId = `ACT-REL-${Date.now().toString().slice(-6)}`;
+  db.prepare(`
+    INSERT INTO activities
+    (id, vehicleNumber, type, category, slot, gate, entryTime, exitTime, status, driver, department, duration, fee, photo, thumb, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?)
+  `).run(
+    actId,
+    res.vehicleNumber || 'RESERVED',
+    res.vehicleType,
+    res.reservationType,
+    res.slotId,
+    'Security Command',
+    now.slice(11, 16),
+    '—',
+    'Reservation Released',
+    userName,
+    `Released by Security: ${releaseNotes || 'Authorized manual release'}`,
+    'Released',
+    now
+  );
+
+  // Notification
+  const notifId = `notif-${Date.now()}`;
+  db.prepare(`
+    INSERT INTO notifications (id, title, message, time, type, read, createdAt)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(
+    notifId,
+    'Reservation Released',
+    `Reservation ${id} on slot ${res.slotId} released by ${userName}. Slot ${slot && (slot.occupied || slot.vehicleNumber) ? 'remains occupied by active vehicle' : 'returned to regular allocation'}.`,
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }),
+    'info',
+    now
+  );
+
+  return {
+    success: true,
+    reservation: db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(id),
+    slot: slot ? db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(slot.id) : null
+  };
+}
+
+export function dbUpdateVipReservationStatus(id, newStatus, userRole = 'Security', userName = 'Officer Raj Sharma') {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+
+  const normalizedRole = String(userRole || '').trim().toLowerCase();
+  if (normalizedRole !== 'security' && normalizedRole !== 'admin') {
+    throw new Error('Forbidden: Only authorized Security or Admin personnel are permitted to modify reservation status.');
+  }
+
+  const validStatuses = ['Reserved', 'Arrived / Checked In', 'Completed', 'Released', 'Expired'];
+  if (!validStatuses.includes(newStatus)) {
+    throw new Error(`Invalid reservation status '${newStatus}'. Allowed: ${validStatuses.join(', ')}`);
+  }
+
+  const res = db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(id);
+  if (!res) {
+    throw new Error(`Reservation '${id}' not found.`);
+  }
+
+  db.prepare('UPDATE vip_reservations SET status = ? WHERE id = ?').run(newStatus, id);
+
+  const slot = db.prepare('SELECT * FROM parking_slots WHERE id = ?').get(res.slotId);
+  if (slot) {
+    if (newStatus === 'Completed' || newStatus === 'Released') {
+      const isOccupied = slot.occupied === 1 || Boolean(slot.vehicleNumber);
+      const nextStatus = isOccupied ? 'Occupied' : (slot.isDisabled ? 'Disabled' : 'Available');
+      db.prepare(`
+        UPDATE parking_slots SET
+          isReserved = 0,
+          reservationId = NULL,
+          reservationType = NULL,
+          reservationStatus = NULL,
+          status = ?,
+          updatedAt = ?
+        WHERE id = ?
+      `).run(nextStatus, now, slot.id);
+    } else if (newStatus === 'Arrived / Checked In') {
+      db.prepare(`
+        UPDATE parking_slots SET
+          reservationStatus = 'Arrived / Checked In',
+          updatedAt = ?
+        WHERE id = ?
+      `).run(now, slot.id);
+    } else if (newStatus === 'Expired') {
+      db.prepare(`
+        UPDATE parking_slots SET
+          reservationStatus = 'Expired',
+          updatedAt = ?
+        WHERE id = ?
+      `).run(now, slot.id);
+    }
+  }
+
+  return db.prepare('SELECT * FROM vip_reservations WHERE id = ?').get(id);
+}
+
+export function dbReviewExpiredReservations() {
+  const db = getDatabase();
+  // Fetch active reservations requiring review
+  return db.prepare(`
+    SELECT * FROM vip_reservations 
+    WHERE status IN ('Reserved', 'Expired')
+    ORDER BY createdAt DESC
+  `).all();
+}
+
 /**
  * Returns complete database status and counts
  */
@@ -1586,6 +2162,9 @@ export function dbGetStatus() {
   const occupiedCount = db.prepare('SELECT count(*) as c FROM parking_slots WHERE occupied = 1').get().c;
   const actCount = db.prepare('SELECT count(*) as c FROM activities').get().c;
   const camCount = db.prepare('SELECT count(*) as c FROM cameras').get().c;
+  const vipCount = db.prepare("SELECT count(*) as c FROM vip_reservations WHERE status = 'Reserved'").get().c;
+  const activeResCount = db.prepare("SELECT count(*) as c FROM vip_reservations WHERE status IN ('Reserved', 'Arrived / Checked In')").get().c;
+  const expiredResCount = db.prepare("SELECT count(*) as c FROM vip_reservations WHERE status = 'Expired'").get().c;
 
   let fileSizeKb = 0;
   try {
@@ -1603,7 +2182,10 @@ export function dbGetStatus() {
       totalSlots: slotCount,
       occupiedSlots: occupiedCount,
       activities: actCount,
-      cameras: camCount
+      cameras: camCount,
+      vipReservations: vipCount,
+      activeReservations: activeResCount,
+      expiredReservations: expiredResCount
     }
   };
 }
@@ -1614,13 +2196,16 @@ export function dbGetStatus() {
 export function dbResetToDefaults() {
   const db = getDatabase();
   db.exec(`
-    DELETE FROM registered_vehicles;
-    DELETE FROM parking_slots;
+    PRAGMA foreign_keys = OFF;
+    DELETE FROM vip_reservations;
     DELETE FROM activities;
+    DELETE FROM notifications;
+    DELETE FROM parking_slots;
+    DELETE FROM registered_vehicles;
     DELETE FROM gate_stats;
     DELETE FROM system_settings;
     DELETE FROM cameras;
-    DELETE FROM notifications;
+    PRAGMA foreign_keys = ON;
   `);
   seedInitialData(db);
   return dbGetStatus();

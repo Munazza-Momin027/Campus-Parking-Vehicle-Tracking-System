@@ -26,7 +26,9 @@ import {
   Check,
   ShieldAlert,
   AlertTriangle,
-  DoorOpen
+  DoorOpen,
+  Crown,
+  Lock
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
@@ -522,6 +524,65 @@ export default function DashboardView() {
           </div>
         </div>
       </div>
+
+      {/* Fast-Track VIP Active Reservation Quick Bar */}
+      {metrics.reservedSlots > 0 && (
+        <div style={{
+          padding: '12px 18px',
+          borderRadius: '12px',
+          background: 'linear-gradient(90deg, rgba(234, 179, 8, 0.15) 0%, rgba(245, 158, 11, 0.08) 100%)',
+          border: '1px solid rgba(234, 179, 8, 0.45)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          boxShadow: '0 0 20px rgba(234, 179, 8, 0.15)',
+          gap: '12px',
+          flexWrap: 'wrap'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '9px',
+              background: 'rgba(234, 179, 8, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid rgba(234, 179, 8, 0.5)'
+            }}>
+              <Crown size={20} color="#EAB308" />
+            </div>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: '#FACC15', letterSpacing: '0.03em' }}>
+                ⭐ FAST-TRACK VIP PROTOCOL ACTIVE: {metrics.reservedSlots} BAY{metrics.reservedSlots > 1 ? 'S' : ''} LOCKED
+              </div>
+              <div style={{ fontSize: '12px', color: '#FEF08A', marginTop: '2px' }}>
+                Priority bays are locked in SQLite and strictly excluded from regular allocation. Regular available bays: <strong style={{ color: '#34D399' }}>{metrics.available}</strong>.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setCurrentTab('vip-reservations')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: 'linear-gradient(135deg, #EAB308, #CA8A04)',
+              color: '#070B14',
+              border: 'none',
+              padding: '7px 14px',
+              borderRadius: '8px',
+              fontSize: '12px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(234, 179, 8, 0.3)'
+            }}
+            className="hover-bright"
+          >
+            Manage VIP Reservations <ArrowRight size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Simulation Disclosure Notice Banner */}
       {pipelineMode === 'SIMULATION' && (
@@ -1919,6 +1980,7 @@ export default function DashboardView() {
             }}>
               {twoWheelerSlots.map(slot => {
                 const isSelected = selectedSlotId === slot.id;
+                const isReserved = slot.isReserved || slot.reservationStatus === 'Reserved' || slot.reservationStatus === 'Arrived / Checked In';
                 let bgStyle = 'linear-gradient(180deg, #065F46 0%, #064E3B 100%)';
                 let borderStyle = '1px solid #10B981';
                 let shadowStyle = '0 0 10px rgba(16, 185, 129, 0.2)';
@@ -1931,6 +1993,10 @@ export default function DashboardView() {
                   bgStyle = 'linear-gradient(180deg, #991B1B 0%, #7F1D1D 100%)';
                   borderStyle = '1px solid #DC2626';
                   shadowStyle = '0 0 10px rgba(220, 38, 38, 0.25)';
+                } else if (isReserved) {
+                  bgStyle = 'linear-gradient(180deg, #854D0E 0%, #713F12 100%)';
+                  borderStyle = '1.5px solid #EAB308';
+                  shadowStyle = '0 0 14px rgba(234, 179, 8, 0.45)';
                 }
 
                 return (
@@ -1953,15 +2019,18 @@ export default function DashboardView() {
                     }}
                     onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
                     onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                    title={`${slot.id}: ${slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect / select)`}
+                    title={`${slot.id}: ${isReserved ? '⭐ VIP Reserved Bay' : slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect)`}
                   >
                     <span style={{
                       fontSize: '10.5px',
                       fontWeight: 700,
                       fontFamily: 'var(--font-mono)',
-                      color: '#FFFFFF'
+                      color: isReserved ? '#FACC15' : '#FFFFFF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '3px'
                     }}>
-                      {slot.id}
+                      {slot.id} {isReserved && <Crown size={10} color="#EAB308" />}
                     </span>
                     <Bike size={20} color="#FFFFFF" strokeWidth={2.2} />
                   </div>
@@ -2009,7 +2078,7 @@ export default function DashboardView() {
                 color: 'var(--cyan-primary)',
                 border: '1px solid rgba(0, 240, 255, 0.35)'
               }}>
-                {metrics.fourWheelersOccupied}/5 Occupied
+                {metrics.fourWheelersOccupied}/5 Occupied {metrics.reservedSlots > 0 ? `• ${metrics.reservedSlots} VIP Locked` : ''}
               </span>
             </div>
 
@@ -2018,6 +2087,7 @@ export default function DashboardView() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 {fourWheelerSlots.slice(0, 3).map(slot => {
                   const isSelected = selectedSlotId === slot.id;
+                  const isReserved = slot.isReserved || slot.reservationStatus === 'Reserved' || slot.reservationStatus === 'Arrived / Checked In';
                   let bgStyle = 'linear-gradient(180deg, #065F46 0%, #064E3B 100%)';
                   let borderStyle = '1px solid #10B981';
                   let shadowStyle = '0 0 10px rgba(16, 185, 129, 0.2)';
@@ -2030,6 +2100,10 @@ export default function DashboardView() {
                     bgStyle = 'linear-gradient(180deg, #991B1B 0%, #7F1D1D 100%)';
                     borderStyle = '1px solid #DC2626';
                     shadowStyle = '0 0 10px rgba(220, 38, 38, 0.25)';
+                  } else if (isReserved) {
+                    bgStyle = 'linear-gradient(180deg, #854D0E 0%, #713F12 100%)';
+                    borderStyle = '1.5px solid #EAB308';
+                    shadowStyle = '0 0 14px rgba(234, 179, 8, 0.45)';
                   }
 
                   return (
@@ -2052,15 +2126,18 @@ export default function DashboardView() {
                       }}
                       onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
                       onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                      title={`${slot.id}: ${slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect / select)`}
+                      title={`${slot.id}: ${isReserved ? '⭐ VIP Reserved Bay' : slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect)`}
                     >
                       <span style={{
                         fontSize: '10.5px',
                         fontWeight: 700,
                         fontFamily: 'var(--font-mono)',
-                        color: '#FFFFFF'
+                        color: isReserved ? '#FACC15' : '#FFFFFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px'
                       }}>
-                        {slot.id}
+                        {slot.id} {isReserved && <Crown size={10} color="#EAB308" />}
                       </span>
                       <Car size={20} color="#FFFFFF" strokeWidth={2.2} />
                     </div>
@@ -2071,6 +2148,7 @@ export default function DashboardView() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 {fourWheelerSlots.slice(3, 5).map(slot => {
                   const isSelected = selectedSlotId === slot.id;
+                  const isReserved = slot.isReserved || slot.reservationStatus === 'Reserved' || slot.reservationStatus === 'Arrived / Checked In';
                   let bgStyle = 'linear-gradient(180deg, #065F46 0%, #064E3B 100%)';
                   let borderStyle = '1px solid #10B981';
                   let shadowStyle = '0 0 10px rgba(16, 185, 129, 0.2)';
@@ -2083,6 +2161,10 @@ export default function DashboardView() {
                     bgStyle = 'linear-gradient(180deg, #991B1B 0%, #7F1D1D 100%)';
                     borderStyle = '1px solid #DC2626';
                     shadowStyle = '0 0 10px rgba(220, 38, 38, 0.25)';
+                  } else if (isReserved) {
+                    bgStyle = 'linear-gradient(180deg, #854D0E 0%, #713F12 100%)';
+                    borderStyle = '1.5px solid #EAB308';
+                    shadowStyle = '0 0 14px rgba(234, 179, 8, 0.45)';
                   }
 
                   return (
@@ -2105,15 +2187,18 @@ export default function DashboardView() {
                       }}
                       onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
                       onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                      title={`${slot.id}: ${slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect / select)`}
+                      title={`${slot.id}: ${isReserved ? '⭐ VIP Reserved Bay' : slot.occupied ? `Occupied by ${slot.vehicleNumber}` : 'Available'} (Click to inspect)`}
                     >
                       <span style={{
                         fontSize: '10.5px',
                         fontWeight: 700,
                         fontFamily: 'var(--font-mono)',
-                        color: '#FFFFFF'
+                        color: isReserved ? '#FACC15' : '#FFFFFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px'
                       }}>
-                        {slot.id}
+                        {slot.id} {isReserved && <Crown size={10} color="#EAB308" />}
                       </span>
                       <Car size={20} color="#FFFFFF" strokeWidth={2.2} />
                     </div>

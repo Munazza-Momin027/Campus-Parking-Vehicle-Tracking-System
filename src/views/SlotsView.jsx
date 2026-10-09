@@ -24,7 +24,11 @@ import {
   Sliders,
   ChevronRight,
   Maximize2,
-  AlertTriangle
+  AlertTriangle,
+  Crown,
+  Lock,
+  Unlock,
+  ShieldAlert
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
 
@@ -40,16 +44,26 @@ export default function SlotsView() {
     triggerSlotDetectionPending,
     resolvePendingSlot,
     soundEnabled,
-    setCurrentTab
+    setCurrentTab,
+    vipReservations,
+    releaseVipReservation,
+    userRole
   } = useApp();
 
-  // Filter state: 'all', 'available', 'occupied', 'pending', 'two-wheeler', 'four-wheeler'
+  // Filter state: 'all', 'available', 'occupied', 'pending', 'reserved', 'two-wheeler', 'four-wheeler'
   const [filterType, setFilterType] = useState('all');
 
   // Authoritative status resolver driven by backend parking records
   const getSlotRecord = (slotId) => {
     return activities.find(
       (a) => a.slot === slotId && (a.status === 'Parked' || a.status === 'Pending')
+    );
+  };
+
+  const getSlotReservation = (slotId) => {
+    return (vipReservations || []).find(
+      (r) => r.slotId?.toUpperCase() === slotId?.toUpperCase() &&
+             (r.status === 'Reserved' || r.status === 'Arrived / Checked In')
     );
   };
 
@@ -79,12 +93,19 @@ export default function SlotsView() {
       return 'Occupied';
     }
 
+    // ⭐ Check VIP / Emergency Reservation
+    const activeRes = getSlotReservation(slot.id);
+    if (slot.isReserved || slot.reservationStatus === 'Reserved' || activeRes) {
+      return 'Reserved';
+    }
+
     return 'Available';
   };
 
   // Get active selected slot object & backing record
   const selectedSlot = slots.find((s) => s.id === selectedSlotId);
   const selectedRecord = selectedSlot ? getSlotRecord(selectedSlot.id) : null;
+  const selectedReservation = selectedSlot ? getSlotReservation(selectedSlot.id) : null;
 
   // Filter slots based on filter chip selection
   const filteredSlots = useMemo(() => {
@@ -92,13 +113,14 @@ export default function SlotsView() {
       const state = getSlotState(s);
       if (filterType === 'available') return state === 'Available';
       if (filterType === 'occupied') return state === 'Occupied' || (state === 'Selected' && s.occupied);
+      if (filterType === 'reserved') return state === 'Reserved' || s.isReserved;
       if (filterType === 'pending') return state === 'Detection Pending' || (state === 'Selected' && s.isPending);
       if (filterType === 'disabled') return state === 'Disabled';
       if (filterType === 'two-wheeler') return s.zone === 'two-wheeler';
       if (filterType === 'four-wheeler') return s.zone === 'four-wheeler';
       return true;
     });
-  }, [slots, filterType, selectedSlotId, activities]);
+  }, [slots, filterType, selectedSlotId, activities, vipReservations]);
 
   // Click slot handler
   const handleSlotClick = (slot) => {
@@ -131,6 +153,17 @@ export default function SlotsView() {
           glow: '0 0 16px rgba(16, 185, 129, 0.2)',
           bgGradient: 'linear-gradient(145deg, rgba(6, 78, 59, 0.4) 0%, rgba(2, 44, 34, 0.7) 100%)',
           accent: 'var(--green-bright)'
+        };
+      case 'Reserved':
+        return {
+          label: 'Reserved',
+          badgeText: '⭐ VIP RESERVED',
+          badgeColor: '#FACC15',
+          badgeBg: 'rgba(234, 179, 8, 0.22)',
+          border: '1.5px solid rgba(234, 179, 8, 0.7)',
+          glow: '0 0 20px rgba(234, 179, 8, 0.4)',
+          bgGradient: 'linear-gradient(145deg, rgba(113, 63, 18, 0.5) 0%, rgba(66, 32, 6, 0.8) 100%)',
+          accent: '#FACC15'
         };
       case 'Occupied':
         return {
@@ -224,6 +257,28 @@ export default function SlotsView() {
         {/* Action Button & Legend Indicators */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <button
+            onClick={() => setCurrentTab('vip-reservations')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '7px',
+              background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.18), rgba(245, 158, 11, 0.25))',
+              border: '1px solid rgba(234, 179, 8, 0.5)',
+              color: '#FACC15',
+              padding: '8px 14px',
+              borderRadius: '9px',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 0 14px rgba(234, 179, 8, 0.2)'
+            }}
+            className="hover-bright"
+          >
+            <Crown size={14} color="#EAB308" /> + Reserve VIP Bay
+          </button>
+
+          <button
             onClick={() => setCurrentTab('settings')}
             style={{
               display: 'flex',
@@ -244,7 +299,7 @@ export default function SlotsView() {
             <Sliders size={14} /> + Manage & Add Slots
           </button>
 
-          {/* 4 Slot State Legend Indicators */}
+          {/* 5 Slot State Legend Indicators */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -259,6 +314,10 @@ export default function SlotsView() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--green-bright)', boxShadow: '0 0 6px var(--green-bright)' }} />
               <span style={{ color: '#FFFFFF', fontWeight: 600 }}>Available ({metrics.available})</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#EAB308', boxShadow: '0 0 6px #EAB308' }} />
+              <span style={{ color: '#FACC15', fontWeight: 600 }}>Reserved ({metrics.reservedSlots || 0})</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--red-bright)', boxShadow: '0 0 6px var(--red-bright)' }} />
@@ -287,6 +346,7 @@ export default function SlotsView() {
         {[
           { id: 'all', label: `All Slots (${slots.length})` },
           { id: 'available', label: `🟢 Available Only (${metrics.available})` },
+          ...(metrics.reservedSlots > 0 ? [{ id: 'reserved', label: `⭐ Reserved Only (${metrics.reservedSlots})` }] : []),
           { id: 'occupied', label: `🔴 Occupied Only (${metrics.occupied})` },
           { id: 'pending', label: `🟡 Detection Pending (${metrics.pending || 0})` },
           { id: 'two-wheeler', label: `Two-Wheeler Zone T (${metrics.twoWheelersTotal})` },
@@ -1177,6 +1237,114 @@ export default function SlotsView() {
                   <Sliders size={13} /> Manage / Enable in Settings
                 </button>
               </div>
+            ) : (selectedReservation || selectedSlot.isReserved) ? (
+              /* VIP / Emergency Reserved Bay Details */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{
+                  background: 'rgba(234, 179, 8, 0.1)',
+                  border: '1px solid rgba(234, 179, 8, 0.4)',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: '#FACC15', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Crown size={14} /> {selectedReservation?.reservationType || 'VIP'} RESERVATION
+                    </span>
+                    <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                      {selectedReservation?.id || 'RES-LOCKED'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>RESERVED FOR</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#FFFFFF', marginTop: '2px' }}>
+                      {selectedReservation?.reservedFor || 'Official Dignitary'}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>AUTHORIZED VEHICLE</div>
+                      <div className="plate-badge" style={{ fontSize: '13px', marginTop: '2px' }}>
+                        {selectedReservation?.vehicleNumber || 'KA-22-VIP-0001'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>VALID UNTIL</div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#E2E8F0', marginTop: '2px' }}>
+                        {selectedReservation?.expiryTime || '06:00 PM'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ borderTop: '1px solid rgba(234, 179, 8, 0.2)', paddingTop: '8px' }}>
+                    <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>PURPOSE / REASON</div>
+                    <div style={{ fontSize: '11.5px', color: '#CBD5E1', marginTop: '2px' }}>
+                      {selectedReservation?.reason || 'Fast-Track Official Protocol'}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button
+                    onClick={() => setCurrentTab('vip-reservations')}
+                    style={{
+                      background: 'linear-gradient(135deg, #EAB308, #CA8A04)',
+                      color: '#070B14',
+                      fontWeight: 800,
+                      fontSize: '12px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Crown size={14} /> Open in VIP Reservation Manager
+                  </button>
+
+                  {(selectedReservation || selectedSlot?.reservationId || selectedSlot?.isReserved) && (
+                    <button
+                      onClick={async () => {
+                        if (userRole === 'Unauthorized') {
+                          alert('Access Denied: Only Security Personnel can release VIP reservations.');
+                          return;
+                        }
+                        const resId = selectedReservation?.id || selectedSlot?.reservationId || selectedSlot?.id;
+                        if (window.confirm(`Release VIP reservation for Bay ${selectedSlot.id}? (Occupancy is preserved if vehicle is parked)`)) {
+                          const result = await releaseVipReservation(resId, 'Released from Slots View');
+                          if (!result.success) {
+                            alert(result.error || 'Failed to release VIP reservation');
+                          }
+                        }
+                      }}
+                      disabled={userRole === 'Unauthorized'}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        color: '#F87171',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        borderRadius: '8px',
+                        padding: '9px',
+                        cursor: userRole === 'Unauthorized' ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Unlock size={14} /> Release VIP Reservation
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : (
               /* Vacant Slot Telemetry Details */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'center', padding: '20px 0' }}>
@@ -1199,9 +1367,32 @@ export default function SlotsView() {
                     Slot {selectedSlot.id} is Available
                   </div>
                   <p style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    No active parking record associated. Ready for automatic allocation at Gate 1.
+                    No active parking record associated. Ready for automatic allocation or VIP reservation.
                   </p>
                 </div>
+
+                {/* Fast-Track VIP Reserve Button */}
+                <button
+                  onClick={() => setCurrentTab('vip-reservations')}
+                  style={{
+                    background: 'rgba(234, 179, 8, 0.14)',
+                    border: '1px solid rgba(234, 179, 8, 0.4)',
+                    color: '#FACC15',
+                    fontWeight: 700,
+                    fontSize: '11.5px',
+                    borderRadius: '8px',
+                    padding: '9px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    marginTop: '4px'
+                  }}
+                  className="hover-bright"
+                >
+                  <Crown size={13} /> + Lock / Reserve as VIP Bay
+                </button>
 
                 {/* Simulate Optical Tripwire / Pending Detection */}
                 <button
@@ -1222,8 +1413,7 @@ export default function SlotsView() {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '6px',
-                    marginTop: '8px'
+                    gap: '6px'
                   }}
                 >
                   <Radio size={13} className="animate-pulse" /> Simulate Optical Sensor Tripwire (Set Pending)
